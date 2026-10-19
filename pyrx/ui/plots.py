@@ -359,6 +359,9 @@ class SpectrumPanel(QtWidgets.QWidget):
         old = self.ref
         self.ref = float(hz)
         self.freq_axis.ref = self.ref
+        # the axis caches its labels and only redraws on range changes, which may not happen here
+        self.freq_axis.picture = None
+        self.freq_axis.update()
         # keep the view on the same absolute frequencies when possible
         self.view_center += old - self.ref
         self._apply_view()

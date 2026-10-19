@@ -12,6 +12,19 @@ Demodulators: WFM (mono/stereo, 50/75 µs de-emphasis), NFM, AM, USB, LSB, CW, D
 the left/right audio channels). There is also AGC, squelch, baseband IQ and audio recording, a frequency
 manager (bookmarks), and persisted settings.
 
+### Screenshots
+
+All three were captured live from a HackRF One.
+
+![FM broadcast band, 10 MS/s, WFM stereo](docs/screenshots/hackrf-fm-band.png)
+*FM broadcast band (94.5–104.5 MHz) at 10 MS/s, tuned to a station at 102.4 MHz in WFM.*
+
+![900 MHz mobile band, 20 MS/s](docs/screenshots/hackrf-900mhz.png)
+*900 MHz mobile downlink at 20 MS/s: narrow GSM carriers next to a wideband 3G/LTE block.*
+
+![Zoomed-in view of a 940 MHz carrier](docs/screenshots/hackrf-900mhz-zoom.png)
+*The same capture zoomed 8×, with the VFO and AM passband on the carrier at 940.2 MHz.*
+
 ---
 
 ## 1. Install
