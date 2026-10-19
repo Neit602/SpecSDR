@@ -1,0 +1,8 @@
+# Core application. Installs from wheels with no system libraries needed.
+# (sounddevice needs the PortAudio library at *runtime* on Linux/macOS; if it is missing
+#  PyRX starts anyway with a silent null audio output. Windows/macOS wheels bundle PortAudio.)
+PyQt5>=5.15.9
+numpy>=1.24
+scipy>=1.10
+pyqtgraph>=0.13.3
+sounddevice>=0.4.6

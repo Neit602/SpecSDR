@@ -1,0 +1,11 @@
+# Hardware bindings. These need system libraries (see README):
+#   RTL-SDR : librtlsdr (osmocom or RTL-SDR Blog build)
+#   HackRF  : libhackrf - PyRX talks to it through its own receive-only ctypes binding,
+#             so no Python package is needed for HackRF.
+#
+# pyrtlsdr is pinned: 0.4.0 and later bind rtlsdr_set_dithering(), which the standard
+# osmocom / RTL-SDR Blog librtlsdr does not export, so `import rtlsdr` itself fails.
+pyrtlsdr==0.3.0
+# pyrtlsdr 0.3.0 imports pkg_resources (removed from newer setuptools). PyRX also provides
+# a stand-in if it is missing, so this line is belt and braces.
+setuptools<81
