@@ -176,3 +176,97 @@ the first 8 s. That led to the 80 ms device buffer (DECISIONS.md).
 
 No step required a human. Hardware testing was opportunistic: both devices turned up during the
 run and were tested.
+
+---
+
+# FPV video (analog FM video reception) — report
+
+**Status: implemented and verified on synthesised signals, the simulated source, recorded IQ files, and on 2026-11-09 with a real HackRF One (r9) receiving a real analog VTX and RunCam camera on a drone (R6, 5843 MHz, NTSC, on a desk).
+Live picture, colour, scanner and sustained 20 MS/s were confirmed on that hardware (decoded frames inspected by eye). PAL on a real transmitter and several checklist items were not; they are marked below. The session ended when the VTX overheated.
+Live re-lock and the crash fix were confirmed on hardware in a second run. The range scan on hardware reports false extra results; see the hardware table.
+
+Legend: **done** = implemented and verified as stated; **partial** = implemented, but some part could not be verified here (usually: real hardware), or it deviates in a stated way.
+
+## Tests
+
+Baseline before any change: **84 passed, 0 failed, 0 skipped** (the original suite). After the work: **120 passed, 0 failed, 0 skipped** (the 84 originals plus 36 new FPV tests in `tests/test_fpv_acceptance.py` and `tests/test_fpv_app.py`). The final `.venv/bin/python -m pytest` run on the final code passed; several earlier runs on near-final code were also green, and 30 consecutive application exits were clean after the exit fix described under known bugs. `requirements.txt` was also installed into a fresh venv (no system libraries), and the app ran the smoke command from it.
+
+| Acceptance test | Requirement | Result |
+|---|---|---|
+| PAL decode (CNR 25 dB) | lock ≤ 3 fields, PSNR ≥ 28 dB, frame counter without gaps | **pass**, PSNR 31.7 dB |
+| NTSC + auto-detect + inverted deviation | same, standard auto-detected, inverted signal decodes | **pass**, PSNR 32.9 dB |
+| Weak signal CNR 12 dB | stays locked, ≤ 1 % lost lines | **pass**, 0.00 % lost |
+| Offset ±1.5 MHz | PSNR within 3 dB of on-frequency | **pass**, within 0.3 dB at both 25 and 12 dB CNR; AFC reports the offset within ±200 kHz |
+| Dropouts (10 chunks, 1 k–100 k samples) | re-lock ≤ 2 fields, never raises | **pass** |
+| Block continuity | identical frames, any block size | **pass** (identical RGB and luma) |
+| Colour bars | hue ±10° | **pass**, worst error 0.2° (PAL and NTSC) |
+| Scanner | exactly the 2 video channels, correct standard | **pass** |
+| File round trip | record .cs8, replay through the file source, decode pattern | **pass** |
+| Video smoke command | exit 0, no exceptions, test pattern written | **pass** (`--snapshot` PNG inspected by eye too) |
+
+## Requirement status
+
+| Requirement | Status | How verified |
+|---|---|---|
+| FPV mode: HackRF, simulated and IQ-file sources, side-panel section, dockable resizable video with full screen | done* | GUI tests; screenshots inspected; full-screen logic exercised offscreen (*not tested on a real display in a real full-screen window*). HackRF path: verified on hardware |
+| RTL-SDR: mode disabled with explanation | done | GUI test (button disabled, tooltip) |
+| Entering sets 20 MS/s + baseband filter + centre on channel; leaving restores | done (HackRF: 20 MS/s and filter applied without error; restore on leave tested on the simulator only) | GUI test on the simulated source |
+| Spectrum and waterfall keep running | done | Screenshots; frames shown during FPV |
+| Warning below 16 MS/s | done | Panel status + status bar; decoder also tested at 10 and 16 MS/s |
+| Channels: 5.8 GHz table, manual entry, user groups in JSON via the frequency manager | done | Tests on the table (values from the spec), user group round trip, tuning through the selector. Other bands have no preset tables on purpose |
+| Demodulation chain as specified (DC → FM → AFC → LPF → sync/polarity → H PLL + flywheel → vsync/field assembly → clamp + AGC → resample → deinterlace) | done | Acceptance tests; greyscale steps measured within 0.004 of source |
+| Standards PAL/NTSC, auto + manual | done | Auto: acceptance tests. Manual: decoder parameter, unit-tested through the panel plumbing |
+| Colour PAL/NTSC, burst lock, automatic greyscale fallback, on/off, saturation | done | Hue test; greyscale test on a burst-less signal; saturation/colour wired to the decoder |
+| Flywheel, re-lock ≤ 2 fields, NO SIGNAL or raw picture when unlocked | done | Dropout test; raw-picture test; NO SIGNAL screenshot inspected; recovery after a real VTX fade by replaying the recording |
+| Picture controls | done | Parameter reach test; values checked in the decoder |
+| Status overlay | done | Screenshot inspected |
+| Scanner: channel mode, range mode, line-structure detection, results list, double-click, auto-tune, continuous | partial (channel mode correct on hardware; range mode finds the transmitter but also reports false extras) | Acceptance test (2 of 4 signals); screenshots; range mode measured on the simulator |
+| Audio subcarrier (stretch) | done (numerically) | Tone test through the DSP and through the worker; not listened to on a real speaker, and FPV transmitters use different audio deviations. On hardware: a strong 6.5 MHz subcarrier is present (47 dB above neighbouring bins), and it was decoded to a WAV (rms 0.008, energy mostly below 3 kHz). Nobody has listened to it yet |
+| Recording: PNG, MP4, IQ .cs8 at 20 MS/s | done (MP4 tested with imageio-ffmpeg; .cs8 replay matches the pattern) | File round trip; MP4 container checked, snapshot PNGs inspected. `hackrf_transfer`-compatibility is by format definition (signed 8-bit interleaved), not cross-checked with the real tool |
+| Settings persistence | done | Round-trip GUI test |
+| Simulated transmitters (PAL F4, NTSC R8, non-standard, CW, OFDM-like; deviation/CNR/offset configurable) | done | Scanner test; controls in the device dialog |
+| HackRF 20 MS/s sustained for FPV | done | Real HackRF, NTSC VTX: about 30 fps, 0 samples dropped, 0 USB overflows in 10–15 s runs, offscreen and with a real window |
+
+## Performance (Intel i5-12600KF, 16 threads, this machine)
+
+| Measurement | Result |
+|---|---|
+| Decoder alone, real-time factor at 20 MS/s | **1.30–1.34×** real time on a real VTX capture (131072-sample chunks); 1.22–1.28× with the earlier 32768-sample chunks |
+| In-app decode from a recorded `.cs8` through the file source at 20 MS/s (spectrum + waterfall + GUI, offscreen) | PAL **25.0 fps**, NTSC **30.0 fps**; decode latency (sample arrival to frame ready) **25–31 ms**, 0 dropped samples, 1 field dropped at start-up; app CPU ~146 % of one core |
+| In-app on the Simulated source | 22–24 fps because the simulator's real-time synthesis is the bottleneck (1.12× real time when alone); the decoder itself keeps up |
+| Latency | Decode (block arrival to frame ready) on real HackRF with a healthy signal: **5–50 ms**. Display adds up to one GUI frame (~33 ms). Glass-to-glass latency was not measured |
+| Scan time (simulator, 20 MS/s, 25 ms dwell) | 5.8 GHz table (47 distinct channels): **2.4–3.4 s**; 1000–6000 MHz (625 steps): **32 s** |
+| Scan time on real HackRF | 5.8 GHz table (47 distinct channels): **4.8–5.1 s**. 5000–6000 MHz (126 steps): **12.8–13.1 s**. 1–6 GHz: not run |
+
+## Real hardware results (HackRF One r9, RunCam + analog VTX, 2026-11-09)
+
+| Check | Result |
+|---|---|
+| Scanner, 5.8 GHz table | Exactly one result: R6, 5843 MHz, NTSC, matching an independent `hackrf_sweep` |
+| Picture | Colour scene and camera OSD decoded correctly (inspected by eye). Early black frames were a lens cap left on |
+| Healthy signal, live | H/V/colour lock, about 30 fps, 0 samples dropped, at most 1 line lost of about 200,000 at CNR about 21 dB |
+| Gain at bench distance (amp off) | LNA 16 / VGA 20: CNR 13.7 dB. LNA 24 / VGA 30: 21.8 dB. LNA 32 / VGA 30: 22.3 dB. LNA 40 / VGA 30: 15.8 dB (overload) |
+| Frame loss found live (fixed) | About 12 % of frames lost to GIL contention with 32768-sample chunks. Chunks now match the 131072-sample USB transfer |
+| Drop counter (fixed) | Logged and displayed dropped samples were counted twice |
+| Stuck after a fade (fixed) | When the overheating VTX faded, tracked sync levels were corrupted and the decoder could stay unlocked for seconds after the signal returned (8 frames in 5 s). It now re-acquires after a field of failed sync; the same recording gives 135 frames. Regression test added |
+| Live re-lock | Tuned away to 5600 MHz and back, five cycles over two runs (0.3–1 s away): first locked frame **60–93 ms** after retuning back, including the 60 ms retune settling |
+| Live MP4 recording | 166 frames in 6 s written; a frame extracted from the file was inspected and is correct. The recorder was not closed normally in that run (the process crashed later) |
+| Segfault (fixed) | The live test crashed in `track_lines`: frames from acquisition left stale pulses queued, a later re-phase search moved the line grid up to seconds behind the buffer, and the tracker read outside it. The queue is now cleared at lock, and the tracker refuses to index behind the buffer and re-acquires instead (logged as a warning). Reproduced offline with real signal plus noise; regression tests added. Re-run live with three retune cycles: no crash, and the guard never fired |
+| Drops per feature, live | Video only: 0 dropped, 4 ms latency. Video + audio: 0 dropped, 85 ms latency. Adding MP4: 4.98 M samples dropped (82 frames in 3 s). The test script started the encoder on the decoder thread, which the app does not do, so the app may not show this; not measured in the app |
+| Range scan 5000–6000 MHz (open) | 126 steps in 12.8–13.1 s. Finds R6 5843 MHz, plus false NTSC results near 5312 MHz and 5827–5830 MHz (about 8 dB weaker) while only one VTX was transmitting. Same with 15 MHz and 20 MHz filters. The cause (HackRF images or VTX spurs from a very close transmitter) was not determined |
+| Not tested on hardware | PAL transmitter, inverted video, changing VTX channel, 1–6 GHz range scan, unplugging while streaming, listening to decoded audio, full-screen on a real display |
+
+## Known limitations and bugs
+
+- **One hardware setup only.** Tested with one NTSC VTX at bench distance. Long range, real flight and other transmitters are untested. In a deep fade the picture is lost for as long as the fade lasts.
+- **No comb filter.** Luma around the colour subcarrier is sacrificed (notch by re-modulation); in fine high-frequency detail you see faint false colour and softening. The PSNR tests model this notch in their reference ("decoder's video bandwidth"); it isn't compared against unfiltered luma.
+- **Pre-emphasis not handled.** If a transmitter applies video pre-emphasis the picture looks sharpened; there is no de-emphasis option.
+- Only PAL-B/G/D/I-style 4.43 PAL and NTSC-M 3.58 are decoded. PAL-M/N and NTSC-4.43 are out of scope.
+- Weave deinterlacing shows combing on fast motion; switch to Line doubling. Weave is the default.
+- Video AGC relies on the sync amplitude; a transmitter with an unusual sync level (or heavy clipping) reads wrongly.
+- The Qt/sip teardown at interpreter exit could segfault occasionally on Python 3.14 (backtrace in `cleanup_qobject`). `pyrx.app.main` now exits with `os._exit` after closing everything cleanly in `closeEvent`; 30/30 exits clean after that.
+- Scanner: range steps of 8 MHz; a transmitter between steps with a large offset can be reported from two steps and is merged within 7 MHz.
+
+## Blocked by
+
+Nothing blocks the software. The remaining hardware items are listed under "Not tested on hardware" and in the README §4 checklist. Keep VTX sessions short on the bench: it overheated without airflow after about 12 minutes.

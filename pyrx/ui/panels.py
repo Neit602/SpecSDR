@@ -309,6 +309,15 @@ class RadioPanel(QtWidgets.QWidget):
             self.presets.addItem(fmt_hz(p), float(p))
         for wdg in (self.bandwidth, self.order, self.presets):
             wdg.blockSignals(False)
+        is_fpv = mode == "FPV"
+        fpv_tip = "Not used in FPV Video mode (video has its own settings in the FPV Video section)"
+        for wdg in (self.bandwidth, self.presets, self.window, self.order, self.sq, self.sq_thr):
+            wdg.setEnabled(not is_fpv)
+        self.bandwidth.setToolTip(fpv_tip if is_fpv else "")
+        self.window.setToolTip(fpv_tip if is_fpv else "")
+        self.order.setToolTip(fpv_tip if is_fpv else "Channel filter length (taps). Longer = sharper edges, more CPU.")
+        self.sq.setToolTip(fpv_tip if is_fpv else "")
+        self.sq_thr.setToolTip(fpv_tip if is_fpv else "Squelch threshold (channel power at the VFO)")
         is_wfm = mode == "WFM"
         for wdg in (self.deemph, self.deemph_label, self.stereo_w):
             wdg.setVisible(is_wfm)
@@ -537,6 +546,7 @@ class RecordingPanel(QtWidgets.QWidget):
         self.fmt.addItem("16-bit integer", "cs16")
         self.fmt.addItem("8-bit unsigned (RTL native)", "cu8")
         self.fmt.addItem("32-bit float", "cf32")
+        self.fmt.addItem("8-bit signed .cs8 (hackrf_transfer)", "cs8")
         f.addRow("IQ format", self.fmt)
         self.iq_btn = QtWidgets.QPushButton("● Record baseband IQ")
         self.iq_btn.setCheckable(True)
@@ -595,7 +605,7 @@ class BookmarkDialog(QtWidgets.QDialog):
         self.mode.addItems(MODES)
         self.mode.setCurrentText(bm.mode)
         self.bw = QtWidgets.QSpinBox()
-        self.bw.setRange(10, 400000)
+        self.bw.setRange(10, 20_000_000)
         self.bw.setSuffix(" Hz")
         self.bw.setValue(int(bm.bandwidth))
         self.group = QtWidgets.QComboBox()
@@ -627,6 +637,7 @@ class BookmarkDialog(QtWidgets.QDialog):
 class BookmarksPanel(QtWidgets.QWidget):
     tuneRequested = QtCore.pyqtSignal(object)   # Bookmark
     addRequested = QtCore.pyqtSignal()
+    changed = QtCore.pyqtSignal()               # the stored list changed
 
     def __init__(self, store: BookmarkStore, parent=None):
         super().__init__(parent)
@@ -725,3 +736,4 @@ class BookmarksPanel(QtWidgets.QWidget):
         except OSError as e:
             QtWidgets.QMessageBox.warning(self, "Bookmarks", f"Could not save bookmarks: {e}")
         self.reload()
+        self.changed.emit()

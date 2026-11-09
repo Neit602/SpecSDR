@@ -6,3 +6,7 @@ numpy>=1.24
 scipy>=1.10
 pyqtgraph>=0.13.3
 sounddevice>=0.4.6
+# FPV video mode: hot DSP loops (line timing, resampling, chroma) and the MP4 encoder.
+# Both are wheels with no system libraries needed (imageio-ffmpeg bundles an ffmpeg binary).
+numba>=0.61
+imageio-ffmpeg>=0.5

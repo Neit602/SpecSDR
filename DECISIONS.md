@@ -168,3 +168,54 @@ Each entry: what was decided, and why. Logged as the work progressed.
   test made no noise on this machine.
 - Bias-T and HackRF antenna power were only exercised on the *Cancel* path of their confirmation
   dialogs during hardware testing, so no DC was put on whatever antennas were connected.
+
+## FPV video mode (analog FM video from a HackRF)
+
+**What the project already had.** A `Source` abstraction with HackRF (20 MS/s sustained, 0 drops),
+simulated and IQ-file sources; an `Engine` with a source thread, a bounded queue and a DSP thread that
+posts Qt-free commands; `SpectrumAnalyzer`, `Mixer`, `DcRemover`, `FirFilter`, `AudioResampler`; a frequency
+manager (JSON bookmarks); JSON settings saved via `Settings`; an SDR#-style side panel of collapsible
+sections, a Recording panel (WAV only). So: no video code, no `.cs8` writing, no 20 MS/s in the simulator,
+no `--frequency`/`--snapshot` options. Those were added first (they are small).
+
+**Integration.**
+- *FPV is a new mode ("FPV" in `MODES`), not a separate program.* It is entered from the mode buttons or the
+  new "FPV Video" panel. The audio `ReceiverChain` is bypassed (the engine never builds one for FPV) but the
+  spectrum and waterfall keep running. Entering sets 20 MS/s and a 20 MHz HackRF baseband filter and tunes the
+  centre to the channel; leaving restores the mode, rate, filter, VFO and centre.
+- *Threading.* The engine's DSP thread hands each raw (pre-DC-removal) block to `FpvWorker`, a decode thread
+  with a bounded (120 ms) queue, and never blocks. When the decoder falls behind, whole blocks are dropped and the decoder is
+  told (`notify_gap`), so it drops whole fields and resyncs rather than building a backlog. The GUI is updated
+  through a Qt signal carried by `FpvBridge`, "latest wins" so Qt's event queue cannot pile up.
+- *Channels live in the existing frequency manager.* User groups (1.3 GHz, 3.3 GHz, ...) are bookmarks with
+  mode "FPV" in `bookmarks.json`; only the 5.8 GHz table (given by the task) is built in. No tables were
+  invented for other bands.
+- *Prerequisites added:* 16/20 MS/s in the simulator; `.cs8` recording (`RawIqWriter`, the same bytes as
+  `hackrf_transfer -r`; `.cs8` playback already existed); `--frequency`, `--snapshot`, `--mode fpv`.
+- *Simulated transmitters* synthesise real composite video (test pattern, sync, colour burst, PAL switch) and FM-modulate it at the sample rate.
+
+**Decoder design (`pyrx/dsp/fpv/`, no Qt, no threads in the DSP itself).**
+- *Fixed chunk grid.* Input is cut into chunks anchored to the sample stream, so any block size gives
+  identical frames (this is an acceptance test, not an assumption). The front end (DC removal, AFC mixer,
+  FM discriminator, video low-pass) runs one chunk ahead on a worker thread and the back end (sync, picture) consumes
+  in order; the result does not depend on the threads.
+- *numba justified by measurement.* `track_lines` 0.57 µs per line vs 150 µs in Python, `decode_lines` 16 µs vs
+  15 ms in Python: without it a 20 MS/s video chain cannot run in real time in Python. Video FIR: numba 0.32 ms vs
+  scipy `lfilter` 0.40 ms per 32768 samples. Discriminator: numpy `arctan2` is already 20 % of a core at 20 MS/s,
+  and a numba arctan2 was not faster, so it stays numpy. numba and imageio-ffmpeg are pure pip wheels.
+- *Sync.* A sync filter (0.8 µs moving average of the video) feeds a line PLL with a flywheel. Polarity is
+  found from which sign gives a line-spaced pulse train (with a fallback flip when no vertical sync follows).
+  Vertical sync is detected from half-lines with long low time; field parity from the half-line at which it starts;
+  PAL vs NTSC from the line period (0.7 % apart) and confirmed by half-lines per field (625 vs 525). A sample-stream jump is found by looking for a pulse train at another phase while
+  flywheeling, and a missed vsync is replaced by the expected one.
+- *Colour.* The chroma oscillator is a function of absolute sample position, so hue is immune to line-timing jitter. A
+  second-order loop on the burst locks it; cascaded moving averages low-pass the chroma (their first null lands
+  near 2·fsc); PAL also averages two lines. Luma is the composite minus the re-modulated chroma ("chroma notch"),
+  so there is no comb filter: high-frequency luma around the subcarrier is lost and shows as faint false colour (kept simple; see REPORT).
+- *CNR estimate:* M2M4 moments of the IQ envelope (FM has a constant envelope, so all envelope variation is noise).
+- *Picture reference in the PSNR tests* passes the source through the decoder's real luma response (video low-pass
+  minus the chroma band), which is what "low-pass filtered to the decoder's video bandwidth" means for a colour decoder.
+- *Scanner.* Detection is a FM-demodulated pulse-train test at the line period (not power), so CW, OFDM-like and noise never report. Range mode uses 8 MHz steps (≤ 4 MHz offset always). Detections within 7 MHz merge.
+- *Latency:* the fixed chunk adds ≤ 6.6 ms; the bounded decode queue keeps the worst case ≤ 120 ms.
+- *Chunk size changed after the first hardware test* from 32768 to 131072 samples (one HackRF USB transfer). Offline it is only 5–7 % faster, but live the small chunks lost about 12 % of frames, and the larger chunk removed the loss. The likely reason is fewer GIL re-acquisitions while other threads compete; that explanation was not measured directly. The pulse search limit (`MAX_PULSES`) went from 32 to 128 so a whole chunk's lines fit.
+- *Sync watchdog.* Tracked tip/blanking levels update only on lines with a sync hit, so once a fade corrupts them, false hits can keep them wrong. Two consecutive half-field windows with under 50 % hits now restart acquisition, which measures levels afresh. One field of flywheel is kept for ordinary short losses.

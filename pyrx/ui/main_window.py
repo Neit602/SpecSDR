@@ -12,14 +12,19 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from ..audio.sink import SoundDeviceSink, create_sink, sounddevice_available
 from ..config.bookmarks import Bookmark, BookmarkStore
+from ..config.fpv_channels import FPV_BW, group_channels, make_bookmark, nearest_channel, standard_channels
 from ..config.settings import Settings, default_recordings_dir
 from ..core.engine import Engine
+from ..core.fpv import FpvScanner
+from ..core.recorder import VideoRecorder, snapshot_filename, video_filename
 from ..core.tuning import TuneContext, plan, snap
 from ..dsp.receiver import MODE_INFO, MODES, passband
 from ..dsp.spectrum import noise_floor_db
+from ..dsp.fpv.decoder import FpvParams
 from ..sources import SourceError, source_classes
 from ..sources.iqfile import FileMetadataMissing, IqFileSource
 from .freq_display import FrequencyDisplay, parse_frequency
+from .fpv import FpvBridge, FpvDock, FpvPanel, FpvScannerPanel
 from .panels import (AgcPanel, AudioPanel, BookmarksPanel, DisplayPanel, RadioPanel, RecordingPanel,
                      SourcePanel, fmt_rate, fmt_size, fmt_time)
 from .plots import SpectrumPanel
@@ -27,6 +32,7 @@ from .widgets import DeviceDialog, SidePanel
 
 log = logging.getLogger(__name__)
 
+FpvScanner_STEP = 8e6      # range scan step: the video carrier is always within 4 MHz of a tune point
 GUI_FPS_CAP = 60
 # The engine computes spectra at FRAME_OVERSAMPLE x the display rate so that every GUI tick
 # finds a fresh frame (otherwise block-quantised arrival aliases against the timer).
@@ -42,7 +48,7 @@ SHORTCUTS = [
     ("Ctrl+wheel", "Zoom around the mouse"),
     ("Mouse wheel", "Tune by one step"),
     ("Right/middle drag", "Pan the zoomed spectrum"),
-    ("Alt+1 … Alt+8", "Mode: " + ", ".join(MODES)),
+    ("Alt+1 … Alt+9", "Mode: " + ", ".join(MODES)),
     ("S", "Squelch on/off"),
     ("A", "Auto levels"),
     ("Ctrl+F", "Enter a frequency"),
@@ -119,6 +125,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dev_dialog: DeviceDialog | None = None
         self._was_running = False
         self.errors_shown: list[str] = []
+        self._fpv_saved: dict | None = None
+        self._fpv_active = False
+        self._fpv_bw = 18e6
+        self._fpv_busy = False
+        self._video_rec: VideoRecorder | None = None
+        self._fpv_last = None           # last frame painted
+        self._scanner: FpvScanner | None = None
+        self._scan_view_center: float | None = None
 
         no_audio = bool(args and getattr(args, "no_audio", False)) or os.environ.get("PYRX_NO_AUDIO") == "1"
         a = settings["audio"]
@@ -228,6 +242,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.side.add_section("audio", "Audio", self.p_audio, False)
         self.side.add_section("display", "Display", self.p_display, False)
         self.side.add_section("recording", "Recording", self.p_rec, False)
+        self.p_fpv = FpvPanel(self.bookmarks)
+        self.p_scan = FpvScannerPanel(self.bookmarks)
+        self.side.add_section("fpv", "FPV Video", self.p_fpv, False)
+        self.side.add_section("fpv_scan", "FPV Scanner", self.p_scan, False)
         self.side.add_section("bookmarks", "Frequency manager", self.p_bm, False)
 
         # ---- main area
@@ -256,6 +274,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_split.setSizes([300, 1100])
         self.setCentralWidget(self.main_split)
 
+        # ---- FPV video panel
+        self.fpv_dock = FpvDock(self)
+        self.fpv_dock.setMinimumSize(320, 240)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.fpv_dock)
+        self.resizeDocks([self.fpv_dock], [620], QtCore.Qt.Horizontal)
+        self.fpv_dock.hide()
+        self.fpv_bridge = FpvBridge(self)
+        self.fpv_bridge.frameReady.connect(self._fpv_show_frame)
+        self.fpv_bridge.scanProgress.connect(self._scan_progress)
+        self.fpv_bridge.scanFinished.connect(self._scan_finished)
+
         # ---- status bar
         sb = self.statusBar()
         self.st_level = QtWidgets.QLabel()
@@ -265,13 +294,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.st_audio = QtWidgets.QLabel()
         self.st_cpu = QtWidgets.QLabel()
         self.st_fps = QtWidgets.QLabel()
+        self.st_fpv = QtWidgets.QLabel()
         self.st_level.setToolTip("Channel power inside the VFO passband")
         self.st_snr.setToolTip("Channel power relative to the noise floor estimated from the spectrum")
         self.st_rate.setToolTip("Sample rate actually arriving from the source (nominal in brackets)")
         self.st_drop.setToolTip("Blocks lost: engine queue full + reported by the source/driver")
         self.st_audio.setToolTip("Audio buffer fill, underruns / overruns, clock-drift correction")
         self.st_cpu.setToolTip("CPU used by PyRX in % of one core (DSP thread load in brackets)")
-        for w in (self.st_level, self.st_snr, self.st_rate, self.st_drop, self.st_audio, self.st_cpu, self.st_fps):
+        self.st_fpv.setToolTip("FPV video decoder status")
+        for w in (self.st_fpv, self.st_level, self.st_snr, self.st_rate, self.st_drop, self.st_audio, self.st_cpu,
+                  self.st_fps):
             sb.addPermanentWidget(w)
 
         # ---- menu
@@ -285,6 +317,7 @@ class MainWindow(QtWidgets.QMainWindow):
         a.setShortcut(QtGui.QKeySequence("Ctrl+L"))
         a = m.addAction("Full screen", self._toggle_fullscreen)
         a.setShortcut(QtGui.QKeySequence("F11"))
+        m.addAction("FPV video panel", lambda: self.fpv_dock.show())
         m = mb.addMenu("&Help")
         m.addAction("Keyboard shortcuts", self._show_shortcuts)
         m.addAction("About PyRX", self._about)
@@ -332,6 +365,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p_rec.formatChanged.connect(lambda f: self.settings["recording"].__setitem__("iq_format", f))
         self.p_bm.tuneRequested.connect(self.tune_bookmark)
         self.p_bm.addRequested.connect(self.add_bookmark)
+        self.p_bm.changed.connect(self._fpv_channels_changed)
+        pf = self.p_fpv
+        pf.enableRequested.connect(self._fpv_toggle_requested)
+        pf.channelSelected.connect(self.fpv_tune)
+        pf.paramsChanged.connect(self._fpv_params)
+        pf.viewChanged.connect(self._fpv_view)
+        pf.snapshotRequested.connect(self.fpv_snapshot)
+        pf.recordToggled.connect(self._fpv_record)
+        pf.showVideoRequested.connect(self.fpv_dock.show)
+        pf.fullscreenRequested.connect(self._fpv_fullscreen)
+        pf.addChannelRequested.connect(self._fpv_add_channel)
+        pf.audioChanged.connect(self._fpv_audio)
+        ps2 = self.p_scan
+        ps2.scanRequested.connect(self._scan_start)
+        ps2.stopRequested.connect(self._scan_stop)
+        ps2.tuneRequested.connect(self.fpv_tune)
 
         sp = self.spectrum
         sp.tuneRequested.connect(lambda hz: self.set_vfo(hz, snap_to_step=self.snap_on, follow=False))
@@ -464,6 +513,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if k in self.side.sections:
                 self.side.sections[k].set_expanded(bool(on))
 
+        fpv = s["fpv"]
+        self.p_fpv.apply_settings(fpv)
+        self.p_scan.apply_settings(fpv.get("scan", {}))
+        self._fpv_view({"aspect": 4.0 / 3.0 if int(fpv.get("aspect", 0)) == 0 else 16.0 / 9.0,
+                        "overlay": bool(fpv.get("overlay", True)),
+                        "no_signal_screen": bool(fpv.get("no_signal_screen", True))})
+        self._fpv_dock_visible = bool(fpv.get("dock_visible", True))
+
         # source + tuning (command line wins)
         args = self.args
         name = (args.source if args and args.source else None) or src.get("name", "simulated")
@@ -472,13 +529,20 @@ class MainWindow(QtWidgets.QMainWindow):
         mode = radio.get("mode", "WFM") if radio.get("mode") in MODES else "WFM"
         if args and getattr(args, "mode", None):
             mode = args.mode.upper()
+        if mode not in MODES:
+            log.warning("unknown mode %s; using WFM", mode)
+            mode = "WFM"
         self.mode = mode
         self.select_source(name, initial=True)
         vfo = float(radio.get("vfo", 99.8e6))
         if args and getattr(args, "freq", None):
             vfo = float(args.freq)
+        if mode == "FPV":
+            self._initial_fpv_freq = vfo if args and getattr(args, "freq", None) else None
         self.set_mode(mode, force=True)
-        if self.source is not None and self.source.tunable:
+        if mode == "FPV":
+            pass                        # _enter_fpv tuned to the channel
+        elif self.source is not None and self.source.tunable:
             self.set_vfo(vfo, snap_to_step=False)
         else:
             self.set_vfo(self.source.center_frequency if self.source else vfo, snap_to_step=False)
@@ -503,9 +567,10 @@ class MainWindow(QtWidgets.QMainWindow):
         src["swap_iq"] = self.p_source.swap.isChecked()
         src["lo_offset"] = self.lo_offset
         src["lo_offset_hz"] = self.lo_offset_hz
-        radio["vfo"] = self.vfo
+        radio["vfo"] = self.vfo if self.mode != "FPV" else (self._fpv_saved or {}).get("vfo", self.vfo)
         radio["mode"] = self.mode
-        self.bandwidths[self.mode] = self.engine.params.bandwidth or MODE_INFO[self.mode].bandwidth
+        if self.mode != "FPV":
+            self.bandwidths[self.mode] = self.engine.params.bandwidth or MODE_INFO[self.mode].bandwidth
         radio["bandwidths"] = self.bandwidths
         radio["orders"] = self.orders
         radio["filter_window"] = self.p_radio.window.currentData()
@@ -528,6 +593,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     colormap=pd.cmap.currentData(), range_db=self.s_range.value(), ref_db=self.s_offset.value(),
                     wf_contrast=self.s_contrast.value(), zoom=self.spectrum.zoom)
         s["recording"]["directory"] = self.p_rec.dir.text()
+        fp = self.p_fpv.settings()
+        fp["scan"] = self.p_scan.settings()
+        fp["dock_visible"] = self.fpv_dock.isVisible()
+        fp["last_freq"] = self.vfo if self.mode == "FPV" else s["fpv"].get("last_freq", 5800e6)
+        s.data["fpv"] = fp
         ui["geometry"] = _b64(self.saveGeometry())
         ui["state"] = _b64(self.saveState())
         ui["main_splitter"] = _b64(self.main_split.saveState())
@@ -580,6 +650,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine.set_source(self.source)
         self.p_source.info.setText("" if ok else why)
         self._refresh_devices(open_now=ok)
+        self._fpv_update_availability()
+        if self._fpv_active:
+            if self._fpv_source_ok()[0]:
+                self._fpv_reconfigure()
+            else:
+                self.set_mode(self._fpv_saved.get("mode", "WFM") if self._fpv_saved else "WFM", force=True)
         if was_running and not initial and ok:
             self.start()
 
@@ -646,6 +722,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if src.is_open:
             self.p_source.info.setText(src.info_text())
         self.config_btn.setEnabled(bool(src.controls()))
+        self._fpv_update_availability()
         lo, hi = src.frequency_range()
         self.center_disp.setRange(lo, hi)
         self.center_disp.setEnabled(src.tunable)
@@ -792,6 +869,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def stop(self):
+        if self._scanner is not None:
+            self._scanner.stop()
         if self.engine.running or self.engine._thread is not None:
             self.engine.stop()
         self._set_play_button(False)
@@ -808,6 +887,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except SourceError as e:
             self._error_box("Sample rate", str(e))
         self._source_changed_ui()
+        if self._fpv_active:
+            self._fpv_reconfigure()
         if was:
             self.start()
 
@@ -815,9 +896,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _tune_ctx(self) -> TuneContext:
         src = self.source
         lo, hi = passband(self.mode, self.engine.params.bandwidth or MODE_INFO[self.mode].bandwidth)
+        if self.mode == "FPV":
+            lo, hi = passband("FPV", FPV_BW)
         fmin, fmax = src.frequency_range()
+        lo_on = self.lo_offset and self.mode != "FPV"   # video is received at DC
         return TuneContext(src.center_frequency, src.sample_rate, src.usable_bandwidth(), lo, hi, src.tunable,
-                           fmin, fmax, self.lo_offset, self.lo_offset_hz)
+                           fmin, fmax, lo_on, self.lo_offset_hz)
 
     def current_step(self) -> float:
         return self.step or MODE_INFO[self.mode].step
@@ -879,13 +963,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_vfo(b.frequency, snap_to_step=False)
 
     def add_bookmark(self):
-        bw = self.engine.params.bandwidth or MODE_INFO[self.mode].bandwidth
+        bw = FPV_BW if self.mode == "FPV" else self.engine.params.bandwidth or MODE_INFO[self.mode].bandwidth
         self.side.sections["bookmarks"].set_expanded(True)
         self.p_bm.add_bookmark(Bookmark(f"{self.vfo / 1e6:.4f} MHz", self.vfo, self.mode, bw))
 
     # ======================================================================= radio
     def set_mode(self, mode: str, force: bool = False):
         if mode == self.mode and not force:
+            return
+        if mode == "FPV":
+            self._enter_fpv()
+            return
+        if self.mode == "FPV":
+            self._leave_fpv(new_mode=mode)
             return
         if self.engine.params.bandwidth and self.mode in MODES and not force:
             self.bandwidths[self.mode] = self.engine.params.bandwidth
@@ -898,6 +988,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_vfo(self.vfo)
 
     def set_bandwidth(self, bw: float):
+        if self.mode == "FPV":              # the video bandwidth is set in the FPV Video section
+            self.p_radio.set_bandwidth(FPV_BW)
+            return
         info = MODE_INFO[self.mode]
         bw = float(min(max(bw, info.min_bw), info.max_bw))
         self.bandwidths[self.mode] = bw
@@ -1058,6 +1151,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p_radio.set_stereo_indicator(st.running and st.stereo)
         self.p_radio.sq_level.setText(f"{st.level_db:.0f} dBFS" if st.running else "")
         self.p_agc.gain_label.setText(f"{st.agc_gain_db:+.1f} dB" if st.running else "")
+        self._fpv_status_tick(st)
         sink = e.sink
         self.p_audio.info.setText(
             f"{sink.name} @ {sink.sample_rate:g} Hz, drift corr. {st.drift_ppm:+.0f} ppm\n"
@@ -1074,6 +1168,343 @@ class MainWindow(QtWidgets.QMainWindow):
             if rec.error:
                 txt += f"\nError: {rec.error}"
             setter(rec.active, txt)
+
+    # ======================================================================= FPV video
+    FPV_RATE = 20e6
+    FPV_BB_FILTER = 20e6                # HackRF baseband filter: passes the full FM spectrum at 20 MS/s
+
+    def _fpv_source_ok(self, src=None) -> tuple[bool, str]:
+        src = src or self.source
+        if src is None:
+            return False, "No source"
+        if src.name == "rtlsdr":
+            return False, ("FPV video needs a HackRF: RTL-SDR tuners reach at most 3.2 MS/s of bandwidth and about "
+                           "1.7 GHz, too small for FM video (15-20 MHz wide, mostly at 5.8 GHz).")
+        return True, ""
+
+    def _fpv_update_availability(self) -> None:
+        ok, why = self._fpv_source_ok()
+        self.p_radio.mode_buttons["FPV"].setEnabled(ok)
+        self.p_radio.mode_buttons["FPV"].setToolTip(why or f"FPV video (Alt+{MODES.index('FPV') + 1})")
+        self.p_fpv.set_available(ok, why)
+        src = self.source
+        tunable = src is not None and src.tunable
+        self.p_scan.set_available(tunable, "" if tunable else "The scanner needs a tunable source (not an IQ file)")
+
+    def _enter_fpv(self) -> None:
+        src = self.source
+        ok, why = self._fpv_source_ok()
+        if not ok:
+            self.p_radio.set_mode(self.mode if self.mode != "FPV" else "WFM", self.bandwidths.get("WFM", 200000.0), 127)
+            self.p_fpv.set_active(False)
+            self._error_box("FPV Video", why)
+            return
+        if not self._fpv_active:
+            self._fpv_saved = dict(mode=self.mode if self.mode != "FPV" else "WFM", vfo=self.vfo,
+                                   center=src.center_frequency, rate=src.sample_rate,
+                                   bb=src.get_control("bb_filter"), bandwidth=self.engine.params.bandwidth)
+        self.mode = "FPV"
+        info = MODE_INFO["FPV"]
+        self.p_radio.set_mode("FPV", FPV_BW, info.order)
+        self._update_passband(FPV_BW)
+        if src.tunable:
+            if src.sample_rate != self.FPV_RATE:
+                rng = src.sample_rate_range()
+                if (rng and rng[0] <= self.FPV_RATE <= rng[1]) or self.FPV_RATE in src.sample_rates():
+                    self.set_sample_rate(self.FPV_RATE)
+            if src.get_control("bb_filter") is not None:
+                src.set_control("bb_filter", self.FPV_BB_FILTER)
+                self._on_control_changed("bb_filter", self.FPV_BB_FILTER)
+        self._fpv_active = True
+        freq = getattr(self, "_initial_fpv_freq", None)
+        self._initial_fpv_freq = None
+        if freq is None and src.tunable:
+            freq = self.p_fpv.manual_value() or self.p_fpv.current_channel()
+        if freq is None:
+            freq = src.center_frequency
+        self._fpv_reconfigure()
+        self.set_vfo(freq, snap_to_step=False)
+        self.spectrum.set_passband(*passband("FPV", FPV_BW), MODE_INFO["FPV"].sideband)
+        self.p_fpv.select_frequency(self.vfo)
+        self.side.sections["fpv"].set_expanded(True)
+        if self._fpv_dock_visible:
+            self.fpv_dock.show()
+        self.p_fpv.set_active(True, self._fpv_rate_note())
+        self.p_scan.set_active(True)
+
+    def _leave_fpv(self, new_mode: str | None = None) -> None:
+        if self._scanner is not None:
+            self._scanner.stop()
+        if self._video_rec is not None:
+            self._fpv_record(False)
+        self.engine.fpv_disable()
+        self._fpv_active = False
+        saved = self._fpv_saved or {}
+        src = self.source
+        self.p_fpv.set_active(False)
+        self.p_scan.set_active(False)
+        self.fpv_dock.hide()
+        mode = new_mode or saved.get("mode", "WFM")
+        if src is not None and src.tunable:
+            rate = saved.get("rate")
+            if rate and rate != src.sample_rate:
+                self.mode = mode
+                self.set_sample_rate(rate)
+            if saved.get("bb") is not None or "bb_filter" in src.control_state():
+                src.set_control("bb_filter", saved.get("bb"))
+                self._on_control_changed("bb_filter", saved.get("bb"))
+        self.mode = mode
+        bw = self.bandwidths.get(mode, MODE_INFO[mode].bandwidth)
+        order = self.orders.get(mode, MODE_INFO[mode].order)
+        self.engine.set_mode(mode, bw, order)
+        self.p_radio.set_mode(mode, bw, order)
+        self._update_passband(bw)
+        self.set_vfo(saved.get("vfo", self.vfo))
+        if src is not None and src.tunable and "center" in saved:
+            self.set_center(saved["center"])
+        self._fpv_saved = None
+
+    def _fpv_rate_note(self) -> str:
+        rate = self.source.sample_rate
+        if rate < 16e6:
+            return f"Warning: {rate / 1e6:g} MS/s is below 16 MS/s; the picture will be degraded."
+        return "Receiving"
+
+    def _fpv_reconfigure(self) -> None:
+        """(Re)create the decoder for the current sample rate."""
+        src = self.source
+        params = FpvParams(**self.p_fpv.decoder_params())
+        params.show_raw = not self.p_fpv.settings()["no_signal_screen"]
+        worker = self.engine.fpv_enable(params, self._fpv_on_frame)
+        worker.audio.enabled = self.p_fpv.audio_on.isChecked()
+        worker.audio.set_subcarrier(float(self.p_fpv.subcarrier.currentData()))
+        self.p_fpv.set_active(True, self._fpv_rate_note())
+        if src.sample_rate < 16e6:
+            self.statusBar().showMessage(self._fpv_rate_note(), 10000)
+
+    def _fpv_toggle_requested(self, on: bool) -> None:
+        if on:
+            self.set_mode("FPV")
+        elif self.mode == "FPV":
+            self.set_mode((self._fpv_saved or {}).get("mode", "WFM"))
+
+    def fpv_tune(self, hz: float) -> None:
+        """Tune to a channel: enters FPV mode if needed and centres the receiver on it."""
+        if self.mode != "FPV":
+            self.set_mode("FPV")
+            if self.mode != "FPV":
+                return
+        self.set_vfo(hz, snap_to_step=False)
+        self.p_fpv.select_frequency(self.vfo)
+
+    def _fpv_params(self, d: dict) -> None:
+        worker = self.engine.fpv
+        if worker is not None:
+            worker.post(lambda: worker.decoder.set_params(**d))
+
+    def _fpv_view(self, d: dict) -> None:
+        view = self.fpv_dock.view
+        if "aspect" in d:
+            view.set_aspect(d["aspect"])
+        if "overlay" in d:
+            view.overlay = d["overlay"]
+            view.update()
+        if "no_signal_screen" in d:
+            self._fpv_no_signal_screen = d["no_signal_screen"]
+            worker = self.engine.fpv
+            if worker is not None:
+                worker.post(lambda v=not d["no_signal_screen"]: worker.decoder.set_params(show_raw=v))
+
+    def _fpv_audio(self, d: dict) -> None:
+        worker = self.engine.fpv
+        if worker is None:
+            return
+        if "enabled" in d:
+            worker.audio.enabled = d["enabled"]
+        if "subcarrier" in d:
+            worker.post(lambda v=d["subcarrier"]: worker.audio.set_subcarrier(v))
+
+    def _fpv_channels_changed(self) -> None:
+        self.p_fpv.reload_channels()
+        self.p_scan.reload_groups()
+
+    def _fpv_add_channel(self) -> None:
+        hz = self.p_fpv.manual_value() or self.vfo
+        name = f"{hz / 1e6:.0f} MHz"
+        self.p_bm.add_bookmark(make_bookmark(name, hz, "FPV"))
+        self._fpv_channels_changed()
+
+    def _fpv_fullscreen(self) -> None:
+        self.fpv_dock.show()
+        self.fpv_dock.toggle_fullscreen()
+
+    def _fpv_on_frame(self, frame) -> None:
+        """Decoder thread. Never blocks: display is latest-wins."""
+        self._fpv_last = frame
+        rec = self._video_rec
+        if rec is not None:
+            rec.push(frame.rgb)
+        if not self._fpv_busy:
+            self._fpv_busy = True
+            self.fpv_bridge.frameReady.emit()
+
+    def _fpv_show_frame(self) -> None:
+        self._fpv_busy = False
+        frame = self._fpv_last
+        if frame is not None:
+            self.fpv_dock.view.set_frame(frame.rgb)
+
+    def fpv_snapshot(self) -> str | None:
+        frame = self._fpv_last
+        if frame is None:
+            self.statusBar().showMessage("No decoded frame to save yet", 4000)
+            return None
+        path = snapshot_filename(self._rec_dir(), self.vfo)
+        self._save_frame_png(frame, path)
+        self.statusBar().showMessage(f"Saved {os.path.basename(path)}", 6000)
+        return path
+
+    def _save_frame_png(self, frame, path: str) -> bool:
+        try:
+            d = os.path.dirname(os.path.abspath(path))
+            os.makedirs(d, exist_ok=True)
+            rgb = frame.rgb
+            h, w = rgb.shape[:2]
+            img = QtGui.QImage(rgb.data, w, h, 3 * w, QtGui.QImage.Format_RGB888)
+            return bool(img.save(path, "PNG"))
+        except OSError as e:
+            log.error("snapshot failed: %s", e)
+            return False
+
+    def _fpv_record(self, on: bool) -> None:
+        pf = self.p_fpv
+        if on:
+            frame = self._fpv_last
+            if frame is None:
+                self.statusBar().showMessage("No decoded video yet", 4000)
+                pf.record_btn.blockSignals(True)
+                pf.record_btn.setChecked(False)
+                pf.record_btn.blockSignals(False)
+                return
+            h, w = frame.rgb.shape[:2]
+            fps = 25.0 if frame.standard == "PAL" else 29.97
+            path = video_filename(self._rec_dir(), self.vfo)
+            try:
+                rec = VideoRecorder(path, w, h, fps)
+                rec.start()
+            except Exception as e:
+                self._error_box("Recording", f"Cannot start video recording: {e}")
+                pf.record_btn.blockSignals(True)
+                pf.record_btn.setChecked(False)
+                pf.record_btn.blockSignals(False)
+                return
+            self._video_rec = rec
+            pf.record_btn.setText("■ Stop recording")
+            pf.record_btn.setStyleSheet("background:#8a1f1f;color:white;")
+            pf.record_info.setText(os.path.basename(path))
+        else:
+            rec, self._video_rec = self._video_rec, None
+            if rec is not None:
+                rec.stop()
+                pf.record_info.setText(f"{os.path.basename(rec.path)}: {rec.frames_written} frames"
+                                       + (f", {rec.dropped} dropped" if rec.dropped else "")
+                                       + (f"\nError: {rec.error}" if rec.error else ""))
+            pf.record_btn.blockSignals(True)
+            pf.record_btn.setChecked(False)
+            pf.record_btn.blockSignals(False)
+            pf.record_btn.setText("● Record video")
+            pf.record_btn.setStyleSheet("")
+
+    def _fpv_status_tick(self, st) -> None:
+        worker = self.engine.fpv
+        view = self.fpv_dock.view
+        if worker is None:
+            self.st_fpv.setText("")
+            return
+        s = worker.status()
+        locked = s.h_locked and s.v_locked
+        view.show_no_signal = (not locked) and bool(getattr(self, "_fpv_no_signal_screen", True))
+        if view.overlay:
+            drops = s.dropped_samples + st.dropped_blocks * 131072 + (st.source_overflows or 0) * 131072
+            view.overlay_lines = [
+                f"{self.vfo / 1e6:.3f} MHz   {s.standard}  {'inv' if s.polarity < 0 else ''}",
+                f"H {'LOCK' if s.h_locked else '----'}   V {'LOCK' if s.v_locked else '----'}   "
+                f"Colour {'LOCK' if s.colour_locked else 'off'}",
+                f"Carrier offset {s.carrier_offset / 1e3:+.0f} kHz",
+                f"Level {s.level_db:.1f} dBFS   CNR {s.cnr_db:.1f} dB",
+                f"{s.fps:.1f} fps   latency {s.latency_ms:.0f} ms",
+                f"Dropped: {s.dropped_fields} fields, {drops} samples",
+            ]
+            view.update()
+        self.st_fpv.setText(f"FPV {s.standard} {'LOCK' if locked else 'unlocked'} {s.fps:.1f} fps")
+
+    # -----------------------------------------------------------------------
+    def _scan_start(self, d: dict) -> None:
+        if self.mode != "FPV":
+            self.p_scan.set_running(False)
+            return
+        if not self.engine.running and not self.start():
+            self.p_scan.set_running(False)
+            return
+        if d["mode"] == "channels":
+            names = []
+            picked = [b.partition(":") for b in d["bands"]]
+            std = {name for kind, _, name in picked if kind == "std"}
+            if std:
+                names = [hz for _, hz in standard_channels(std)]
+            for kind, _, group in picked:
+                if kind == "user":
+                    names += [hz for _, hz in group_channels(self.bookmarks, group)]
+            freqs = sorted(set(names))
+        else:
+            lo, hi = d["f_lo"], d["f_hi"]
+            if hi <= lo:
+                self.p_scan.state_label.setText("Enter a valid range")
+                self.p_scan.set_running(False)
+                return
+            step = FpvScanner_STEP
+            freqs = [lo + step / 2 + i * step for i in range(int((hi - lo) / step) + 1) if lo + step / 2 + i * step <= hi]
+        if not freqs:
+            self.p_scan.state_label.setText("Nothing to scan")
+            self.p_scan.set_running(False)
+            return
+        sc = FpvScanner(self.engine, lambda f: nearest_channel(f, self.bookmarks))
+        sc.on_update = lambda: self.fpv_bridge.scanProgress.emit()
+        sc.on_finished = lambda: self.fpv_bridge.scanFinished.emit()
+        self._scanner = sc
+        self._scan_view_center = self.source.center_frequency
+        self.p_scan.set_running(True)
+        self.p_scan.state_label.setText(f"Scanning 0/{len(freqs)} ...")
+        sc.start(freqs, d["continuous"])
+
+    def _scan_stop(self) -> None:
+        if self._scanner is not None:
+            self._scanner.stop()
+
+    def _scan_progress(self) -> None:
+        sc = self._scanner
+        if sc is None:
+            return
+        self.p_scan.set_results(sc.results.values())
+        self.p_scan.state_label.setText(f"Scanning {sc.step_done}/{sc.steps_total}  found {len(sc.results)}")
+
+    def _scan_finished(self) -> None:
+        sc = self._scanner
+        if sc is None:
+            return
+        self._scanner = None
+        self.p_scan.set_results(sc.results.values())
+        self.p_scan.set_running(False)
+        msg = f"{sc.step_done} steps in {sc.last_duration:.1f} s, {len(sc.results)} video signal(s)"
+        if sc.error:
+            msg = f"Scan failed: {sc.error}"
+        self.p_scan.state_label.setText(msg)
+        best = sc.strongest()
+        if best is not None and self.p_scan.autotune.isChecked() and not sc.error:
+            self.fpv_tune(best.frequency)
+        else:
+            self.set_vfo(self.vfo, snap_to_step=False)
+            self.set_center(self._scan_view_center or self.source.center_frequency)
 
     # ======================================================================= misc
     def _error_box(self, title: str, msg: str):
@@ -1106,9 +1537,17 @@ class MainWindow(QtWidgets.QMainWindow):
             ev.accept()
             return
         self._closed = True
+        if self._scanner is not None:
+            self._scanner.stop()
+        snap = getattr(self.args, "snapshot", None) if self.args else None
+        if snap and self._fpv_last is not None:
+            self._save_frame_png(self._fpv_last, snap)
+        if self._video_rec is not None:
+            self._fpv_record(False)
         self.save_settings()
         self._gui_timer.stop()
         self._status_timer.stop()
+        self.engine.fpv_disable()
         self.engine.shutdown()
         for s in self._sources.values():
             if s is not self.source and s.is_open:
@@ -1116,4 +1555,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._dev_dialog is not None:
             self._dev_dialog.close()
         self.spectrum.shutdown()
+        if self.fpv_dock.is_fullscreen():
+            self.fpv_dock._end_fullscreen()
         ev.accept()

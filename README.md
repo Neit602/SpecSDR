@@ -9,7 +9,7 @@ others), **HackRF One**. Receive only. There is no transmit code (the HackRF bin
 even load libhackrf's TX functions).
 
 Demodulators: WFM (mono/stereo, 50/75 µs de-emphasis), NFM, AM, USB, LSB, CW, DSB, RAW (I/Q to
-the left/right audio channels). There is also AGC, squelch, baseband IQ and audio recording, a frequency
+the left/right audio channels), and **analog FPV video** (PAL/NTSC, HackRF). There is also AGC, squelch, baseband IQ and audio recording, a frequency
 manager (bookmarks), and persisted settings.
 
 ### Screenshots
@@ -137,6 +137,13 @@ Headless check (used by the test suite):
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pyrx --source simulated --autostart --exit-after 10
 ```
 
+To add PyRX to the applications menu on Linux, with its icon, run this once (no root needed).
+It stores the project's absolute path, so run it again if you move the folder:
+
+```bash
+./install-desktop.sh
+```
+
 Settings and bookmarks are in `~/.config/pyrx/` (Linux), `%APPDATA%\PyRX\` (Windows),
 `~/Library/Application Support/PyRX/` (macOS).
 
@@ -163,7 +170,7 @@ Keyboard: `Space` start/stop · `←/→` step tune (`Shift` = ×10) · `↑/↓
 `Ctrl+R` record audio · `Ctrl+Shift+R` record IQ · `Ctrl +/-` zoom · `Ctrl+L` side panel ·
 `F11` full screen (also in *Help → Keyboard shortcuts*).
 
-**Simulated source:** fixed signals around 100 MHz (WFM stereo at 99.8, NFM voice bursts at
+**Simulated source:** FPV video transmitters at 5800 (PAL), 5917 (NTSC) and 5963 MHz, a CW carrier and an OFDM-like signal in the 5.8 GHz band (settings in ⚙); fixed signals around 100 MHz (WFM stereo at 99.8, NFM voice bursts at
 100.25, CW beacon at 100.45, AM voice at 100.6, USB voice at 100.75). Frequencies, levels,
 noise and an optional DC spike can be changed in ⚙.
 
@@ -171,7 +178,43 @@ noise and an optional DC spike can be changed in ⚙.
 centre frequency and sample rate in the name (`pyrx_<UTC time>_<centre>Hz_<rate>sps_IQ.wav`),
 so they replay directly in the IQ file source. Files are split before 4 GB.
 
-## 4. Tests
+## 4. FPV video (analog FM video, HackRF)
+
+Press **FPV** in the Radio panel (or *Enter FPV Video mode* in the **FPV Video** section). PyRX switches to
+20 MS/s with a 20 MHz baseband filter, tunes to the channel, opens the **FPV Video** panel and keeps the spectrum and waterfall running.
+Leaving the mode restores the previous mode, sample rate, filter and tuning. The mode works with HackRF One, the Simulated source and IQ files, and is disabled for RTL-SDR
+(too narrow and too low in frequency).
+
+* **Channels:** band and channel selector with the standard 5.8 GHz table (A, B, E, F, R, L). Type any frequency
+  (`5740`, `1.28G`) and press Tune or Enter. The `+` button saves it to the frequency manager as an FPV channel in a group; groups (1.3 GHz, 3.3 GHz, ...) appear in the band list and in the scanner.
+* **Picture:** Standard auto/PAL/NTSC, Deinterlace (weave or line doubling), Video BW (removes the sound subcarrier), Colour and Saturation, Brightness, Contrast, Video AGC or manual Gain, Sync threshold, H/V position, Aspect 4:3 or 16:9, status overlay.
+  When the signal drops, choose *Show NO SIGNAL screen* or *Show raw (noisy) picture*.
+* **Status overlay:** H/V lock, standard, colour lock, carrier offset, level and CNR, decoded fps, latency, dropped fields and samples.
+* **Video panel:** dockable and resizable, *Full screen* (double-click or Esc to return), *Snapshot* to PNG and *Record video* to MP4 (`pyrx_<UTC>_<freq>Hz_FPV.mp4`).
+* **Audio subcarrier:** tick *Audio subcarrier* and pick 6.5, 6.0 or 5.5 MHz.
+* **Scanner** (FPV Scanner section): pick channels (selected bands/groups) or a range (`1000`–`6000` MHz) in 8 MHz overlapping steps, optional *Continuous* re-scan and *Auto-tune* to the strongest. Results show
+  frequency, nearest channel, standard, level and last seen; double-click tunes. Detection is by sync structure, so CW, Wi-Fi and digital FPV links are not reported.
+* **Recording raw IQ:** Recording panel, format *8-bit signed .cs8* (identical to `hackrf_transfer -r`). Filenames carry frequency and rate, so files replay with *File → Open IQ file* and decode at 20 MS/s through the IQ file source.
+
+Headless check: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pyrx --source simulated --mode fpv --frequency 5800e6 --autostart --exit-after 10 --snapshot out.png`.
+Options: `--mode fpv`, `--frequency HZ` (same as `--freq`), `--snapshot PNG`, `--stats` (logs fps and latency every second).
+
+### Manual hardware checklist (a real HackRF and an analog 5.8 GHz video transmitter)
+
+- [ ] Power an analog VTX on a known channel (e.g. F4 5800) at low power with its antenna on, a few metres from the HackRF. Press FPV, select the channel: picture with colour; overlay shows H/V/colour LOCK, carrier offset, CNR.
+- [ ] Change the channel on the VTX: scanner in channel mode (all bands) finds it and reports the correct standard; nothing else (Wi-Fi, other 5.8 GHz traffic) shows up as video. Run a 5000–6000 MHz range scan too. Note the scan times.
+- [ ] Switch the camera/VTX between PAL and NTSC (if it can): standard and field rate update.
+- [ ] Record a capture with `hackrf_transfer -r test_5800MHz_20Msps.cs8 -f 5800000000 -s 20000000 -g 20 -l 24 -n 200000000`, then play it through *File → Open IQ file*: FPV mode decodes the same picture.
+- [ ] Unplug the HackRF while streaming: exactly one error, the mode stays usable; re-plug and restart.
+- [ ] Walk away/behind obstacles to weak signal: flywheel keeps the picture stable, NO SIGNAL (or raw picture) appears when lost, and re-locks when back within ~2 fields.
+
+### Reception notes
+* **Antenna:** a 5.8 GHz antenna, ideally the same circular polarisation as the transmitter (LHCP/RHCP mismatch costs ≥ 15 dB); a rubber whip for the HackRF does not reach 5.8 GHz well. Keep it clear of the PC/USB noise.
+* **External LNA:** a 5.8 GHz LNA right at the antenna (the HackRF front end has a poor noise figure at 5.8 GHz) gains more than RF amp.
+* **HackRF gains:** start with LNA 16–24 dB, VGA 20–30 dB, RF amp off near the VTX (a strong transmitter overloads the input) and on at range. Watch the CNR in the overlay, not the level.
+* **Antenna port power** (`⚙`, asks for confirmation) only for active antennas/LNAs that need 3.3 V bias; it is never left on or restored.
+
+## 5. Tests
 
 ```bash
 .venv/bin/python -m pytest
@@ -181,7 +224,7 @@ No hardware and no sound card are needed. The suite includes the acceptance test
 demodulation, block continuity, spectrum bin mapping, decimation, file round trip, headless
 smoke run) plus unit and GUI tests.
 
-## 5. Manual hardware test checklist
+## 6. Manual hardware test checklist
 
 Tick each item and note anything odd. "OK" means: no traceback, no hang, sensible audio.
 

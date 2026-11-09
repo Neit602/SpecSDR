@@ -17,7 +17,7 @@ from .filters import (FirFilter, MultiStageDecimator, choose_decimation, windowe
 from .nco import Mixer
 from .resample import AudioResampler
 
-MODES = ["NFM", "AM", "LSB", "USB", "WFM", "DSB", "CW", "RAW"]
+MODES = ["NFM", "AM", "LSB", "USB", "WFM", "DSB", "CW", "RAW", "FPV"]
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,8 @@ MODE_INFO: dict[str, ModeInfo] = {
     "DSB": ModeInfo(6000, 500, 20000, 255, (3000, 6000, 10000), step=1000),
     "CW": ModeInfo(500, 50, 3000, 1023, (100, 250, 500, 1000), step=10),
     "RAW": ModeInfo(40000, 2000, 40000, 255, (10000, 20000, 40000), step=1000),
+    # FM video: decoded by dsp.fpv, not by ReceiverChain (the engine never builds a chain for it)
+    "FPV": ModeInfo(18e6, 2e6, 20e6, 127, (), step=1e6),
 }
 
 # audio low-pass per mode (None = only anti-aliasing; the channel filter limits the band)

@@ -185,6 +185,38 @@ class WavWriter:
             self._f.close()
 
 
+class RawIqWriter:
+    """Headerless IQ file (.cs8 is what hackrf_transfer -r writes). The file source reads the
+    centre frequency and sample rate from the file name."""
+
+    def __init__(self, path: str, fmt: str = "cs8"):
+        if fmt not in FORMATS:
+            raise ValueError(f"unsupported raw format {fmt}")
+        self.path = path
+        self.fmt = fmt
+        self.data_bytes = 0
+        self._comp = np.dtype(FORMATS[fmt][0]).itemsize
+        self._f = open(path, "wb")
+
+    @property
+    def bytes_per_frame(self) -> int:
+        return 2 * self._comp
+
+    def write_samples(self, data: np.ndarray) -> int:
+        raw = from_complex(data, self.fmt) if np.iscomplexobj(data) else data
+        b = raw.tobytes()
+        self._f.write(b)
+        self.data_bytes += len(b)
+        return len(b)
+
+    def flush(self) -> None:
+        self._f.flush()
+
+    def close(self) -> None:
+        if not self._f.closed:
+            self._f.close()
+
+
 # ------------------------------------------------------------------ filename metadata
 
 _UNIT = {"": 1.0, "k": 1e3, "m": 1e6, "g": 1e9}

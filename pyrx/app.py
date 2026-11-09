@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 import time
@@ -15,10 +16,11 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(prog="python -m pyrx", description="PyRX - receive-only SDR")
     p.add_argument("--source", choices=["simulated", "file", "rtlsdr", "hackrf"], help="signal source to select")
     p.add_argument("--file", help="IQ file to play (implies --source file)")
-    p.add_argument("--freq", type=float, help="VFO frequency in Hz")
-    p.add_argument("--mode", help="demodulator (NFM, AM, LSB, USB, WFM, DSB, CW, RAW)")
+    p.add_argument("--freq", "--frequency", dest="freq", type=float, help="VFO frequency in Hz")
+    p.add_argument("--mode", help="demodulator (NFM, AM, LSB, USB, WFM, DSB, CW, RAW) or fpv (analog FPV video)")
     p.add_argument("--autostart", action="store_true", help="start streaming immediately")
     p.add_argument("--exit-after", type=float, metavar="SECONDS", help="quit after this many seconds")
+    p.add_argument("--snapshot", metavar="PNG", help="in FPV mode, save the last decoded frame here on exit")
     p.add_argument("--no-audio", action="store_true", help="use the silent null audio sink")
     p.add_argument("--config-dir", help="settings / bookmarks directory (default: per-user config dir)")
     p.add_argument("--reset-settings", action="store_true", help="ignore saved settings")
@@ -55,11 +57,13 @@ def main(argv=None) -> int:
     if not args.reset_settings:
         settings.load()
 
-    from PyQt5 import QtCore, QtWidgets
+    from PyQt5 import QtCore, QtGui, QtWidgets
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv[:1])
     app.setApplicationName("PyRX")
+    app.setDesktopFileName("pyrx")  # lets Linux desktops match the window to its launcher
+    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "ui", "icons", "pyrx.png")))
     from .ui import theme
     theme.apply_dark(app)
     from .ui.main_window import MainWindow
@@ -85,6 +89,13 @@ def main(argv=None) -> int:
         def stats():
             st = win.engine.stats()
             log.info("gui: worst timer lag %.0f ms", lag["max"] * 1000)
+            worker = win.engine.fpv
+            if worker is not None:
+                fs = worker.status()
+                log.info("fpv: %s H%d V%d C%d fps=%.1f latency=%.0fms cnr=%.1f offset=%+.0fkHz fields=%d dropped=%d "
+                         "samples_dropped=%d lost_lines=%d/%d", fs.standard, fs.h_locked, fs.v_locked, fs.colour_locked,
+                         fs.fps, fs.latency_ms, fs.cnr_db, fs.carrier_offset / 1e3, fs.fields, fs.dropped_fields,
+                         fs.dropped_samples, fs.lines_lost, fs.lines_total)
             lag["max"] = 0.0
             log.info("stats: rate=%.3f MS/s drops=%d+%d fps=%.1f cpu=%.0f%% dsp=%.0f%% audio fill=%.0fms "
                      "U%d(dev %d)/O%d drift=%+.0fppm level=%.1f snr=%.1f", st.effective_rate / 1e6, st.dropped_blocks,
@@ -101,4 +112,10 @@ def main(argv=None) -> int:
     log.info("exit: ran %.1f s, %d blocks, %d dropped, %d source overflows, %d DSP errors, %d audio underruns",
              time.monotonic() - t_start, st.blocks, st.dropped_blocks, win.engine.source.overflows if
              win.engine.source else 0, st.dsp_errors, win.engine.sink.underruns)
-    return rc
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # Skip Qt/sip object teardown at interpreter exit: PyQt's QApplication release can crash when
+    # local objects are finalised (seen as SIGSEGV in cleanup_qobject on exit). Everything that
+    # needs a clean ending (recorders, device handles, settings) has already happened in closeEvent.
+    os._exit(rc)

@@ -22,6 +22,8 @@ BB_FILTERS = [1.75e6, 2.5e6, 3.5e6, 5e6, 5.5e6, 6e6, 7e6, 8e6, 9e6, 10e6, 12e6, 
 class HackRFSource(Source):
     name = "hackrf"
     display_name = "HackRF One"
+    # samples already in flight on USB after a retune; the scanner discards this much
+    retune_settle_s = 0.06
 
     def __init__(self):
         super().__init__()

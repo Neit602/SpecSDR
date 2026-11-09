@@ -21,6 +21,7 @@ from ..dsp.dc import DcRemover
 from ..dsp.receiver import AgcSettings, ReceiverChain
 from ..dsp.spectrum import SpectrumAnalyzer, SpectrumFrame, noise_in_band_db
 from ..sources.base import Source, SourceError
+from .fpv import FpvWorker
 from .recorder import Recorder, audio_recorder, iq_recorder
 
 log = logging.getLogger(__name__)
@@ -102,6 +103,9 @@ class Engine:
         self.st = EngineStats()
         self.iq_rec: Recorder | None = None
         self.af_rec: Recorder | None = None
+        self.fpv: FpvWorker | None = None
+        self._tap = None                 # callable(samples, centre, rate) for the scanner
+        self._drift_target = None
 
     # ================================================================ lifecycle
     @property
@@ -221,7 +225,7 @@ class Engine:
         self._last_block_t = now
         self._rate_window.append((now, len(samples)))
         try:
-            self._q.put_nowait((samples, center, rate))
+            self._q.put_nowait((samples, center, rate, now))
         except queue.Full:
             self.st.dropped_blocks += 1
 
@@ -353,6 +357,32 @@ class Engine:
     def last_frame(self) -> SpectrumFrame | None:
         return self._last_frame
 
+    # ---------------------------------------------------------------- FPV video
+    def fpv_enable(self, params, on_frame=None, fs: float | None = None) -> FpvWorker:
+        """Create the FPV decode worker. While it exists the audio chain is bypassed."""
+        self.fpv_disable()
+        src = self.source
+        rate = fs or (src.sample_rate if src else 20e6)
+        worker = FpvWorker(rate, params, on_frame, self.sink)
+        worker.drift_cb = self._update_drift
+        self._drift_target = worker.audio
+        self.fpv = worker
+        return worker
+
+    def fpv_disable(self) -> None:
+        worker, self.fpv = self.fpv, None
+        self._drift_target = None
+        if worker is not None:
+            worker.stop()
+
+    def fpv_pause(self, on: bool) -> None:
+        if self.fpv is not None:
+            self.fpv.set_paused(on)
+
+    def set_tap(self, fn) -> None:
+        """Install a per-block observer on the DSP thread (the scanner's capture)."""
+        self._tap = fn
+
     # ---------------------------------------------------------------- recording
     def start_iq_recording(self, directory: str, fmt: str = "cs16") -> Recorder:
         src = self.source
@@ -407,7 +437,7 @@ class Engine:
                 except Exception:
                     self._dsp_exception()
             try:
-                x, fc, fs = self._q.get(timeout=0.1)
+                x, fc, fs, arrival = self._q.get(timeout=0.1)
             except queue.Empty:
                 if (self._running and not self._error_reported
                         and time.monotonic() - self._last_block_t > self.WATCHDOG_S):
@@ -416,7 +446,7 @@ class Engine:
                 continue
             t0 = time.perf_counter()
             try:
-                self._process(x, fc, fs)
+                self._process(x, fc, fs, arrival)
             except Exception:
                 self._dsp_exception()
             self._busy += time.perf_counter() - t0
@@ -430,7 +460,7 @@ class Engine:
             log.error("DSP error (further identical errors suppressed):\n%s", tb)
             self._event("error", f"Internal DSP error: {key}")
 
-    def _process(self, x: np.ndarray, fc: float, fs: float) -> None:
+    def _process(self, x: np.ndarray, fc: float, fs: float, arrival: float = 0.0) -> None:
         if fs != self._fs or self.chain is None:
             self._reconfigure(fs)
         rec = self.iq_rec
@@ -438,6 +468,11 @@ class Engine:
             rec.push(x)
         if self.swap_iq:
             x = (1j * np.conj(x)).astype(np.complex64)
+        tap, fpv = self._tap, self.fpv
+        if tap is not None:
+            tap(x, fc, fs)
+        if fpv is not None:
+            fpv.push(x, arrival)
         if self.dc_removal:
             x = self._dc.process(x)
         frames = self.spectrum.process(x, fc, fs)
@@ -452,6 +487,12 @@ class Engine:
                 self._frames.extend((now + f.pos * dur, f) for f in frames)
                 if len(self._frames) > self.MAX_FRAMES:
                     del self._frames[:len(self._frames) - self.MAX_FRAMES]
+        if fpv is not None:
+            self.st.blocks += 1
+            status = fpv.status()
+            self.st.level_db = status.level_db
+            self.st.snr_db = status.cnr_db
+            return
         chain = self.chain
         chain.set_offset(self.vfo - fc)
         audio = chain.process(x)
@@ -494,5 +535,6 @@ class Engine:
         ratio = min(max(ratio, 1 - 0.002), 1 + 0.002)
         if abs(ratio - self._drift) > 1e-7:
             self._drift = ratio
-            if self.chain is not None:
-                self.chain.set_drift(ratio)
+            target = self._drift_target or self.chain
+            if target is not None:
+                target.set_drift(ratio)

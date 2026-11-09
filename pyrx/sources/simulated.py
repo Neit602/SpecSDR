@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..dsp.filters import FirInterpolator, IirFilter, kaiser_lowpass
+from ..dsp.fpv.pattern import FpvTransmitter
+from ..dsp.fpv.standards import NTSC, PAL
 from ..dsp.nco import Mixer
 from .base import Control, DeviceInfo, Source, SourceError
 
@@ -111,6 +113,23 @@ class MusicSynth:
         return np.stack([left + hiss, right + hiss], axis=1).astype(np.float32)
 
 
+def _make_ofdm(fs: float, seed: int, bandwidth: float = 16e6, symbol_us: float = 8.0, n_sym: int = 2000) -> np.ndarray:
+    """A burst-free OFDM-like signal: random QPSK on a 16 MHz wide comb of subcarriers, with a
+    cyclic prefix, like a digital FPV link or Wi-Fi (no line structure, but plenty of power)."""
+    rng = np.random.default_rng(seed)
+    n_fft = int(symbol_us * 1e-6 * fs)
+    n_cp = n_fft // 8
+    n_used = max(2, min(int(bandwidth / fs * n_fft), n_fft - 2))
+    syms = []
+    for _ in range(n_sym):
+        bins = np.zeros(n_fft, np.complex128)
+        data = (rng.integers(0, 2, n_used) * 2 - 1) + 1j * (rng.integers(0, 2, n_used) * 2 - 1)
+        bins[np.arange(-n_used // 2, n_used // 2)] = data
+        t = np.fft.ifft(bins) * np.sqrt(n_fft / n_used)
+        syms.append(np.concatenate([t[-n_cp:], t]))
+    return np.concatenate(syms).astype(np.complex64) * np.float32(1 / math.sqrt(2))
+
+
 def morse_envelope(text: str, wpm: float, fs: float, gap_s: float = 3.0) -> np.ndarray:
     code = {"A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.", "G": "--.",
             "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..", "M": "--", "N": "-.",
@@ -142,11 +161,15 @@ def morse_envelope(text: str, wpm: float, fs: float, gap_s: float = 3.0) -> np.n
 @dataclass
 class SimSignal:
     key: str
-    kind: str          # wfm / nfm / am / cw / usb
+    kind: str          # wfm / nfm / am / cw / usb / video_pal / video_ntsc / carrier / ofdm
     frequency: float
     level_db: float
     label: str
     enabled: bool = True
+    # video transmitters only
+    deviation: float = 8e6        # Hz per volt of composite
+    cnr_db: float = 30.0          # carrier power vs noise power in the sample-rate bandwidth
+    offset: float = 0.0           # transmitter frequency error, Hz
 
 
 DEFAULT_SIGNALS = [
@@ -155,13 +178,22 @@ DEFAULT_SIGNALS = [
     SimSignal("cw", "cw", 100.45e6, -55.0, "CW beacon"),
     SimSignal("am", "am", 100.6e6, -40.0, "AM voice, 80 %"),
     SimSignal("usb", "usb", 100.75e6, -50.0, "USB voice"),
+    # 5.8 GHz band: FPV video transmitters and the things a scanner must not call video
+    SimSignal("fpv_pal", "video_pal", 5800e6, -18.0, "FPV video, PAL (F4, 5800 MHz)"),
+    SimSignal("fpv_ntsc", "video_ntsc", 5917e6, -18.0, "FPV video, NTSC (R8, 5917 MHz)"),
+    SimSignal("fpv_x", "video_pal", 5963e6, -18.0, "FPV video, PAL, non-standard 5963 MHz"),
+    SimSignal("cw_58", "carrier", 5760e6, -25.0, "CW carrier, 5760 MHz"),
+    SimSignal("ofdm_58", "ofdm", 5700e6, -22.0, "Wideband digital (OFDM-like), 5700 MHz"),
 ]
+
+VIDEO_KINDS = {"video_pal": PAL, "video_ntsc": NTSC}
 
 
 class _Path:
     """One signal: generator at a low rate -> interpolator -> mixer to its offset."""
 
-    BW = {"wfm": 260e3, "nfm": 16e3, "am": 12e3, "cw": 1e3, "usb": 4e3}
+    BW = {"wfm": 260e3, "nfm": 16e3, "am": 12e3, "cw": 1e3, "usb": 4e3, "video_pal": 20e6, "video_ntsc": 20e6,
+          "carrier": 10e3, "ofdm": 20e6}
 
     def __init__(self, sig: SimSignal, fs: float, k: int, seed: int):
         self.sig = sig
@@ -174,8 +206,14 @@ class _Path:
             self.interp = FirInterpolator(kaiser_lowpass(fs, bw / 2, max(r - bw / 2, bw / 2 * 1.3), 70.0), k)
         self.mixer = Mixer(fs, 0.0)
         self.amp = 10 ** (sig.level_db / 20.0)
+        self.offset_hint = 0.0
         self._n = 0
         kind = sig.kind
+        self.tx = None                   # built when the signal is first in band (templates take ~0.4 s)
+        self._tx_skip = 0
+        self._ofdm = None
+        self._ofdm_pos = 0
+        self._seed = seed
         # audio content is synthesised at an integer fraction of the path rate and
         # interpolated up (one gemm) - much cheaper than an arbitrary resampler here
         if kind in ("nfm", "am", "usb"):
@@ -216,10 +254,42 @@ class _Path:
         out, self._vbuf = self._vbuf[:n], self._vbuf[n:]
         return out
 
+    def _transmitter(self) -> FpvTransmitter:
+        if self.tx is None:
+            sig = self.sig
+            self.tx = FpvTransmitter(VIDEO_KINDS[sig.kind], self.rate, deviation=sig.deviation, offset=sig.offset,
+                                     audio_subcarrier=6.5e6)
+            if self._tx_skip:
+                self.tx.skip(self._tx_skip)
+        return self.tx
+
+    def update_video(self, noise_db: float) -> None:
+        """Video transmitters are specified by CNR: level = noise power + CNR."""
+        self.sig.level_db = noise_db + self.sig.cnr_db
+        self.amp = 10 ** (self.sig.level_db / 20.0)
+
+    def advance(self, n_out: int) -> None:
+        """Keep the signal's timeline running while it is out of the captured band."""
+        if self.sig.kind in VIDEO_KINDS:
+            if self.tx is None:
+                self._tx_skip += n_out
+            else:
+                self.tx.skip(n_out)
+        elif abs(self.offset_hint) > 50e6:
+            self._n += n_out // self.k      # far away: skip the audio synthesis as well
+        else:
+            self.generate_low(n_out // self.k)
+
     def generate_low(self, n: int) -> np.ndarray:
         kind = self.sig.kind
         t0 = self._n
         self._n += n
+        if kind in VIDEO_KINDS:
+            return self._transmitter().generate(n)
+        if kind == "carrier":
+            return np.ones(n, np.complex64)
+        if kind == "ofdm":
+            return self._ofdm_read(n)
         if kind == "usb":
             return self._voice(n) * np.float32(1.2)
         if kind == "am":
@@ -259,6 +329,13 @@ class _Path:
             return np.exp(1j * ph).astype(np.complex64)
         raise ValueError(kind)
 
+    def _ofdm_read(self, n: int) -> np.ndarray:
+        if self._ofdm is None:
+            self._ofdm = _make_ofdm(self.rate, self._seed)
+        out = np.take(self._ofdm, np.arange(self._ofdm_pos, self._ofdm_pos + n), mode="wrap")
+        self._ofdm_pos = (self._ofdm_pos + n) % len(self._ofdm)
+        return out
+
     def generate(self, n_out: int, offset: float) -> np.ndarray:
         x = self.generate_low(n_out // self.k)
         if self.interp is not None:
@@ -273,7 +350,7 @@ class SimulatedSource(Source):
     name = "simulated"
     display_name = "Simulated"
 
-    RATES = [0.25e6, 1.024e6, 1.4e6, 2.048e6, 2.4e6, 3.2e6, 5e6, 8e6, 10e6]
+    RATES = [0.25e6, 1.024e6, 1.4e6, 2.048e6, 2.4e6, 3.2e6, 5e6, 8e6, 10e6, 16e6, 20e6]
 
     def __init__(self):
         self.signals = [SimSignal(**vars(s)) for s in DEFAULT_SIGNALS]
@@ -307,8 +384,17 @@ class SimulatedSource(Source):
             c.append(Control(f"{s.key}.enabled", "Enabled", "bool", s.enabled, group=s.label))
             c.append(Control(f"{s.key}.freq", "Frequency", "number", s.frequency / 1e6, minimum=0.1,
                              maximum=6000, step=0.005, decimals=4, unit="MHz", group=s.label))
-            c.append(Control(f"{s.key}.level", "Level", "slider", s.level_db, minimum=-100, maximum=0,
-                             step=1, unit="dBFS", group=s.label))
+            if s.kind in VIDEO_KINDS:
+                c.append(Control(f"{s.key}.cnr", "CNR", "slider", s.cnr_db, minimum=0, maximum=50, step=1, unit="dB",
+                                 tooltip="Carrier power relative to the noise in the sample-rate bandwidth",
+                                 group=s.label))
+                c.append(Control(f"{s.key}.dev", "Deviation", "number", s.deviation / 1e6, minimum=2, maximum=16,
+                                 step=0.5, decimals=1, unit="MHz/V", group=s.label))
+                c.append(Control(f"{s.key}.offset", "Carrier offset", "number", s.offset / 1e6, minimum=-3, maximum=3,
+                                 step=0.05, decimals=2, unit="MHz", group=s.label))
+            else:
+                c.append(Control(f"{s.key}.level", "Level", "slider", s.level_db, minimum=-100, maximum=0,
+                                 step=1, unit="dBFS", group=s.label))
         return c
 
     def _apply_control(self, key, value):
@@ -322,6 +408,24 @@ class SimulatedSource(Source):
                         s.frequency = float(value) * 1e6
                     elif attr == "level":
                         s.level_db = float(value)
+                    elif attr == "cnr":
+                        s.cnr_db = float(value)
+                        for p in self._paths:
+                            if p.sig is s:
+                                p.update_video(self._values.get("noise_db", -45.0))
+                        return
+                    elif attr == "dev":
+                        s.deviation = float(value) * 1e6
+                        for p in self._paths:
+                            if p.sig is s and p.tx is not None:
+                                p.tx.deviation = s.deviation
+                        return
+                    elif attr == "offset":
+                        s.offset = float(value) * 1e6
+                        for p in self._paths:
+                            if p.sig is s and p.tx is not None:
+                                p.tx.offset = s.offset
+                        return
                     self._rebuild = True
 
     # ------------------------------------------------------------------ device
@@ -348,9 +452,15 @@ class SimulatedSource(Source):
         for i, s in enumerate(self.signals):
             if not s.enabled:
                 continue
-            target = 480e3 if s.kind == "wfm" else 48e3
-            k = max(1, int(round(fs / target)))
-            paths.append(_Path(s, fs, k, seed=7 + i))
+            if s.kind in VIDEO_KINDS or s.kind == "ofdm":
+                k = 1                       # wideband: synthesised directly at the sample rate
+            else:
+                target = 480e3 if s.kind == "wfm" else 48e3
+                k = max(1, int(round(fs / target)))
+            p = _Path(s, fs, k, seed=7 + i)
+            if s.kind in VIDEO_KINDS:
+                p.update_video(self._values.get("noise_db", -45.0))
+            paths.append(p)
         self._paths = paths
         lcm = 1
         for p in paths:
@@ -371,14 +481,23 @@ class SimulatedSource(Source):
             x = self._noise[idx] * sigma
             for p in self._paths:
                 off = p.sig.frequency - fc
-                if abs(off) < fs / 2 + p.BW[p.sig.kind] / 2:
+                p.offset_hint = off
+                if self._in_band(p, off, fs):
                     x += p.generate(n, off)
                 else:
-                    p.generate_low(n // p.k)  # keep its timeline running
+                    p.advance(n)  # keep its timeline running
             if self._values.get("dc_spike"):
                 x += np.complex64(0.02 + 0.015j)
             self.blocks_generated += 1
             return x, fc, fs
+
+    @staticmethod
+    def _in_band(p, off: float, fs: float) -> bool:
+        if p.sig.kind in VIDEO_KINDS:
+            return abs(off) <= fs / 2 - 3e6     # wideband FM: like a real front end, a carrier that is
+        if p.sig.kind == "ofdm":                 # outside the filter leaves no in-band image
+            return abs(off) < fs / 2 - 1e6
+        return abs(off) < fs / 2 + p.BW[p.sig.kind] / 2
 
     def start(self, callback, error_callback=None):
         if self._running:

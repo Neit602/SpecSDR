@@ -60,6 +60,12 @@ DEFAULTS: dict = {
                 "wf_range_db": 70.0, "wf_offset_db": 0.0, "zoom": 1.0, "fill": True,
                 "colormap": "classic"},
     "recording": {"directory": "", "iq_format": "cs16"},
+    "fpv": {"band": "std:F", "channel": 3, "manual": "", "standard": "auto", "deinterlace": "weave",
+            "video_bw": 5.0e6, "colour": True, "saturation": 1.0, "brightness": 0.0, "contrast": 1.0, "agc": True,
+            "gain_db": 0.0, "sync_threshold": 0.5, "h_shift_us": 0.0, "v_shift": 0, "aspect": 0,
+            "no_signal_screen": True, "overlay": True, "audio": False, "subcarrier": 6.5e6,
+            "scan": {"mode": "channels", "bands": [], "f_lo": 5000.0, "f_hi": 6000.0, "continuous": False,
+                     "autotune": False}, "dock_visible": True},
     "ui": {"geometry": "", "state": "", "main_splitter": "", "plot_splitter": "", "side_panel": True,
            "sections": {}, "theme": "dark"},
 }
