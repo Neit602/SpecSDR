@@ -5,11 +5,11 @@ import math
 import numpy as np
 import pytest
 
-from pyrx.dsp.agc import Agc
-from pyrx.dsp.filters import MultiStageDecimator, choose_decimation
-from pyrx.dsp.receiver import AgcSettings, ReceiverChain
-from pyrx.dsp.spectrum import SpectrumAnalyzer
-from pyrx.dsp.synth import am_modulate, awgn, complex_tone, fm_modulate, tone
+from specsdr.dsp.agc import Agc
+from specsdr.dsp.filters import MultiStageDecimator, choose_decimation
+from specsdr.dsp.receiver import AgcSettings, ReceiverChain
+from specsdr.dsp.spectrum import SpectrumAnalyzer
+from specsdr.dsp.synth import am_modulate, awgn, complex_tone, fm_modulate, tone
 
 from helpers import dominant, feed, level_at
 

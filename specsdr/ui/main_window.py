@@ -107,7 +107,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.settings = settings
         self.args = args
-        self.setWindowTitle("PyRX")
+        self.setWindowTitle("SpecSDR")
         self.bookmarks = BookmarkStore().load()
         self._sources: dict[str, object] = {}
         self.source = None
@@ -134,7 +134,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._scanner: FpvScanner | None = None
         self._scan_view_center: float | None = None
 
-        no_audio = bool(args and getattr(args, "no_audio", False)) or os.environ.get("PYRX_NO_AUDIO") == "1"
+        no_audio = bool(args and getattr(args, "no_audio", False)) or os.environ.get("SPECSDR_NO_AUDIO") == "1"
         a = settings["audio"]
         self.sink, msg = create_sink(a.get("device"), a.get("latency_ms", 120) / 1000.0, prefer_null=no_audio)
         self._audio_msg = msg
@@ -300,7 +300,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.st_rate.setToolTip("Sample rate actually arriving from the source (nominal in brackets)")
         self.st_drop.setToolTip("Blocks lost: engine queue full + reported by the source/driver")
         self.st_audio.setToolTip("Audio buffer fill, underruns / overruns, clock-drift correction")
-        self.st_cpu.setToolTip("CPU used by PyRX in % of one core (DSP thread load in brackets)")
+        self.st_cpu.setToolTip("CPU used by SpecSDR in % of one core (DSP thread load in brackets)")
         self.st_fpv.setToolTip("FPV video decoder status")
         for w in (self.st_fpv, self.st_level, self.st_snr, self.st_rate, self.st_drop, self.st_audio, self.st_cpu,
                   self.st_fps):
@@ -320,7 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addAction("FPV video panel", lambda: self.fpv_dock.show())
         m = mb.addMenu("&Help")
         m.addAction("Keyboard shortcuts", self._show_shortcuts)
-        m.addAction("About PyRX", self._about)
+        m.addAction("About SpecSDR", self._about)
 
         # ---- wiring
         self.toggle_side.toggled.connect(self.side.setVisible)
@@ -1117,7 +1117,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for kind, msg in self.engine.take_events():
             if kind in ("error",):
                 self._set_play_button(self.engine.running)
-                self._error_box("PyRX", msg)
+                self._error_box("SpecSDR", msg)
             elif kind == "eof":
                 self.statusBar().showMessage(msg, 8000)
             else:
@@ -1527,8 +1527,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _about(self):
         ok, why = sounddevice_available()
         QtWidgets.QMessageBox.about(
-            self, "About PyRX",
-            "<b>PyRX</b> - a receive-only software-defined radio in Python.<br>"
+            self, "About SpecSDR",
+            "<b>SpecSDR</b> - a receive-only software-defined radio in Python.<br>"
             "Sources: simulated, IQ files, RTL-SDR, HackRF One.<br>"
             f"Audio: {'sounddevice/PortAudio' if ok else 'unavailable (' + why + ')'}")
 

@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 
@@ -23,14 +24,19 @@ def set_config_dir(path: str | None) -> None:
 def config_dir() -> str:
     if _config_dir_override:
         d = _config_dir_override
-    elif os.environ.get("PYRX_CONFIG_DIR"):
-        d = os.environ["PYRX_CONFIG_DIR"]
-    elif sys.platform.startswith("win"):
-        d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "PyRX")
-    elif sys.platform == "darwin":
-        d = os.path.expanduser("~/Library/Application Support/PyRX")
+    elif os.environ.get("SPECSDR_CONFIG_DIR"):
+        d = os.environ["SPECSDR_CONFIG_DIR"]
     else:
-        d = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "pyrx")
+        if sys.platform.startswith("win"):
+            base, name, old_name = os.environ.get("APPDATA", os.path.expanduser("~")), "SpecSDR", "PyRX"
+        elif sys.platform == "darwin":
+            base, name, old_name = os.path.expanduser("~/Library/Application Support"), "SpecSDR", "PyRX"
+        else:
+            base, name, old_name = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "specsdr", "pyrx"
+        d = os.path.join(base, name)
+        old = os.path.join(base, old_name)      # the application's former name: keep the user's settings
+        if not os.path.exists(d) and os.path.isdir(old):
+            shutil.copytree(old, d)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -40,8 +46,8 @@ def default_recordings_dir() -> str:
     for c in ("Music", "Documents"):
         p = os.path.join(home, c)
         if os.path.isdir(p):
-            return os.path.join(p, "PyRX")
-    return os.path.join(home, "PyRX")
+            return os.path.join(p, "SpecSDR")
+    return os.path.join(home, "SpecSDR")
 
 
 DEFAULTS: dict = {

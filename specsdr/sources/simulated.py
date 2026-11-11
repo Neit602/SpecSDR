@@ -234,7 +234,7 @@ class _Path:
         if kind == "nfm":
             self._phase = 0.0
         if kind == "cw":
-            self.key_env = morse_envelope("CQ CQ CQ DE PYRX PYRX K", 18.0, r)
+            self.key_env = morse_envelope("CQ CQ CQ DE SPECSDR SPECSDR K", 18.0, r)
 
     @staticmethod
     def _preemph(fs: float, tau: float = 50e-6) -> IirFilter:

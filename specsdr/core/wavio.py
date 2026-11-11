@@ -224,7 +224,7 @@ _UNIT = {"": 1.0, "k": 1e3, "m": 1e6, "g": 1e9}
 
 def parse_iq_filename(path: str) -> tuple[float | None, float | None]:
     """(centre Hz, sample rate) from common IQ recording filename conventions:
-    'pyrx_..._100000000Hz_2400000sps_IQ.wav', 'SDRSharp_..._100000000Hz_IQ.wav',
+    'specsdr_..._100000000Hz_2400000sps_IQ.wav', 'SDRSharp_..._100000000Hz_IQ.wav',
     'gqrx_20200101_120000_100000000_2400000_fc.raw', '..._100.1MHz_2.4Msps.cu8'."""
     name = os.path.basename(path)
     m = re.search(r"gqrx_\d{8}_\d{6}_(\d+)_(\d+)_fc", name)
@@ -242,4 +242,4 @@ def parse_iq_filename(path: str) -> tuple[float | None, float | None]:
 
 def iq_filename(directory: str, center: float, rate: float, when, ext: str = ".wav", tag: str = "IQ") -> str:
     stamp = when.strftime("%Y%m%d_%H%M%SZ")
-    return os.path.join(directory, f"pyrx_{stamp}_{int(round(center))}Hz_{int(round(rate))}sps_{tag}{ext}")
+    return os.path.join(directory, f"specsdr_{stamp}_{int(round(center))}Hz_{int(round(rate))}sps_{tag}{ext}")

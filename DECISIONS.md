@@ -1,4 +1,4 @@
-# PyRX — design decisions
+# SpecSDR — design decisions
 
 Each entry: what was decided, and why. Logged as the work progressed.
 
@@ -9,7 +9,7 @@ Each entry: what was decided, and why. Logged as the work progressed.
   osmocom / RTL-SDR Blog library the *import itself* fails (`AttributeError`). Verified on this
   machine with `rtl-sdr-blog 1.3.6`. 0.3.0 binds only the standard API.
 - pyrtlsdr 0.3.0 imports `pkg_resources`; `setuptools<81` is listed in `requirements-hw.txt`, and
-  PyRX also installs a tiny stand-in `pkg_resources` module if it is missing (pyrtlsdr only uses it
+  SpecSDR also installs a tiny stand-in `pkg_resources` module if it is missing (pyrtlsdr only uses it
   to read its own version string inside a try/except).
 - All hardware imports are wrapped in `try/except Exception` (not just `ImportError`) because a
   library/binding mismatch raises other exception types at import time.
@@ -25,7 +25,7 @@ Each entry: what was decided, and why. Logged as the work progressed.
   (0.04 ms/block) instead of a per-sample IIR via `lfilter` (2 ms/block for complex input).
 - 8-bit → complex64 conversion via `astype(float32)` + `view(complex64)` (0.07 ms/131k) rather
   than a 64k-entry lookup table (0.22 ms).
-- **BLAS pinned to one thread** (`OPENBLAS_NUM_THREADS=1` etc., set in `pyrx/__init__.py` before
+- **BLAS pinned to one thread** (`OPENBLAS_NUM_THREADS=1` etc., set in `specsdr/__init__.py` before
   numpy loads). Measured: with default OpenBLAS threading the process used ~1270 % CPU (spinning
   worker threads on tiny gemv calls); pinned it uses ~55 % with identical throughput.
 
@@ -51,7 +51,7 @@ Each entry: what was decided, and why. Logged as the work progressed.
   When `read_async` returns without our having cancelled it, the device was lost and one error
   is reported.
 - Offset tuning is offered but reports "not supported" on R820T/R828D (the library returns an
-  error there). PyRX's **LO offset** mode (Source panel) is the generic way to keep the VFO off DC.
+  error there). SpecSDR's **LO offset** mode (Source panel) is the generic way to keep the VFO off DC.
 - RTL-SDR Blog V4 (R828D) lower limit set to 0.5 MHz (its driver switches to the built-in HF
   upconverter). Other tuners use their datasheet ranges; direct sampling gives 0.5–28.8 MHz.
 - Confirm-required settings (bias-T, HackRF antenna power) are **never restored** from saved
@@ -141,7 +141,7 @@ Each entry: what was decided, and why. Logged as the work progressed.
   burst), so squelch can be tested. The CW beacon sends real Morse with 5 ms raised-cosine edges.
 
 ## Audio
-- `sounddevice` is the output. If it is missing, or the device fails to open, PyRX falls back to
+- `sounddevice` is the output. If it is missing, or the device fails to open, SpecSDR falls back to
   `NullSink`, a thread that consumes audio at the real sample rate like a sound card, so buffering
   and drift correction behave the same.
 - PortAudio stream latency is 80 ms, not "low". With "low" (a few ms) the Python callback missed
@@ -153,7 +153,7 @@ Each entry: what was decided, and why. Logged as the work progressed.
   frequency and rate in the filename and an `auxi` chunk (centre frequency, readable by other SDR
   programs). The header is rewritten every 8 MB, so a crash leaves a playable file. Files split before 4 GB.
 - The file source reads via `np.memmap` (no load time, works for huge files), is paced in real time,
-  loops, and seeks. Metadata comes from the filename (PyRX, SDR#-style, gqrx, and `100MHz`/`2.4Msps`
+  loops, and seeks. Metadata comes from the filename (SpecSDR, SDR#-style, gqrx, and `100MHz`/`2.4Msps`
   tokens) or the WAV header; if either is missing, a dialog asks.
 - Settings and bookmarks are JSON written atomically (temp file + rename).
 
@@ -194,7 +194,7 @@ no `--frequency`/`--snapshot` options. Those were added first (they are small).
   `hackrf_transfer -r`; `.cs8` playback already existed); `--frequency`, `--snapshot`, `--mode fpv`.
 - *Simulated transmitters* synthesise real composite video (test pattern, sync, colour burst, PAL switch) and FM-modulate it at the sample rate.
 
-**Decoder design (`pyrx/dsp/fpv/`, no Qt, no threads in the DSP itself).**
+**Decoder design (`specsdr/dsp/fpv/`, no Qt, no threads in the DSP itself).**
 - *Fixed chunk grid.* Input is cut into chunks anchored to the sample stream, so any block size gives
   identical frames (this is an acceptance test, not an assumption). The front end (DC removal, AFC mixer,
   FM discriminator, video low-pass) runs one chunk ahead on a worker thread and the back end (sync, picture) consumes

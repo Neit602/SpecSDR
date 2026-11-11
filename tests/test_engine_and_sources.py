@@ -8,13 +8,13 @@ import time
 import numpy as np
 import pytest
 
-from pyrx.audio.sink import JitterBuffer, NullSink
-from pyrx.core.engine import Engine
-from pyrx.core.recorder import iq_recorder
-from pyrx.dsp.spectrum import SpectrumAnalyzer
-from pyrx.sources.base import Source, SourceError
-from pyrx.sources.iqfile import IqFileSource
-from pyrx.sources.simulated import SimulatedSource
+from specsdr.audio.sink import JitterBuffer, NullSink
+from specsdr.core.engine import Engine
+from specsdr.core.recorder import iq_recorder
+from specsdr.dsp.spectrum import SpectrumAnalyzer
+from specsdr.sources.base import Source, SourceError
+from specsdr.sources.iqfile import IqFileSource
+from specsdr.sources.simulated import SimulatedSource
 
 
 def peak_frequency(blocks, center, rate, size=8192):
@@ -191,8 +191,8 @@ def test_simulated_retune_moves_signals():
 
 
 def test_hardware_sources_fail_cleanly_without_device():
-    from pyrx.sources.hackrf_source import HackRFSource
-    from pyrx.sources.rtlsdr_source import RtlSdrSource
+    from specsdr.sources.hackrf_source import HackRFSource
+    from specsdr.sources.rtlsdr_source import RtlSdrSource
     for cls in (RtlSdrSource, HackRFSource):
         ok, why = cls.available()
         assert isinstance(ok, bool) and isinstance(why, str)

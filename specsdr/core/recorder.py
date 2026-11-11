@@ -132,7 +132,7 @@ def iq_recorder(directory: str, center: float, rate: float, fmt: str = "cs16") -
 def audio_recorder(directory: str, center_vfo: float, rate: float, channels: int = 2) -> Recorder:
     now = _dt.datetime.now(_dt.timezone.utc)
     stamp = now.strftime("%Y%m%d_%H%M%SZ")
-    path = os.path.join(directory, f"pyrx_{stamp}_{int(round(center_vfo))}Hz_AF.wav")
+    path = os.path.join(directory, f"specsdr_{stamp}_{int(round(center_vfo))}Hz_AF.wav")
     return Recorder(path, rate, channels, "cs16")
 
 
@@ -212,9 +212,9 @@ class VideoRecorder:
 
 def video_filename(directory: str, freq: float, stamp=None) -> str:
     now = stamp or _dt.datetime.now(_dt.timezone.utc)
-    return os.path.join(directory, f"pyrx_{now.strftime('%Y%m%d_%H%M%SZ')}_{int(round(freq))}Hz_FPV.mp4")
+    return os.path.join(directory, f"specsdr_{now.strftime('%Y%m%d_%H%M%SZ')}_{int(round(freq))}Hz_FPV.mp4")
 
 
 def snapshot_filename(directory: str, freq: float, stamp=None) -> str:
     now = stamp or _dt.datetime.now(_dt.timezone.utc)
-    return os.path.join(directory, f"pyrx_{now.strftime('%Y%m%d_%H%M%SZ')}_{int(round(freq))}Hz_FPV.png")
+    return os.path.join(directory, f"specsdr_{now.strftime('%Y%m%d_%H%M%SZ')}_{int(round(freq))}Hz_FPV.png")

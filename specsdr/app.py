@@ -9,11 +9,11 @@ import sys
 import threading
 import time
 
-log = logging.getLogger("pyrx")
+log = logging.getLogger("specsdr")
 
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(prog="python -m pyrx", description="PyRX - receive-only SDR")
+    p = argparse.ArgumentParser(prog="python -m specsdr", description="SpecSDR - receive-only SDR")
     p.add_argument("--source", choices=["simulated", "file", "rtlsdr", "hackrf"], help="signal source to select")
     p.add_argument("--file", help="IQ file to play (implies --source file)")
     p.add_argument("--freq", "--frequency", dest="freq", type=float, help="VFO frequency in Hz")
@@ -61,9 +61,9 @@ def main(argv=None) -> int:
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv[:1])
-    app.setApplicationName("PyRX")
-    app.setDesktopFileName("pyrx")  # lets Linux desktops match the window to its launcher
-    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "ui", "icons", "pyrx.png")))
+    app.setApplicationName("SpecSDR")
+    app.setDesktopFileName("specsdr")  # lets Linux desktops match the window to its launcher
+    app.setWindowIcon(QtGui.QIcon(os.path.join(os.path.dirname(__file__), "ui", "icons", "specsdr.png")))
     from .ui import theme
     theme.apply_dark(app)
     from .ui.main_window import MainWindow

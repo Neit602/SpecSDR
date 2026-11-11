@@ -1,4 +1,4 @@
-"""PyRX - a receive-only software-defined radio with an SDR#-style interface."""
+"""SpecSDR - a receive-only software-defined radio with an SDR#-style interface."""
 
 import os as _os
 

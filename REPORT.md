@@ -1,4 +1,4 @@
-# PyRX — final report
+# SpecSDR — final report
 
 **Status: all four milestones implemented; the full test suite (84 tests) passes; tested on real
 RTL-SDR and HackRF hardware.** A few items could only be partly verified without a human (listening
@@ -15,7 +15,7 @@ manual checklist for them.
 | Hardware | **RTL-SDR Blog V4** (R828D, librtlsdr rtl-sdr-blog 1.3.6) and **HackRF One** r9 (firmware/libhackrf 2026.01.3). Both turned up during the run (they weren't in `lsusb` at the start). Indoor antenna; FM broadcast signals were weak on the RTL and moderate on the HackRF. |
 
 At times the HackRF was held by another program on this machine (a process from a different
-project folder). PyRX reported that cleanly ("Resource busy"). I waited until it was free and did
+project folder). SpecSDR reported that cleanly ("Resource busy"). I waited until it was free and did
 not touch the other program.
 
 ## Feature status
@@ -45,7 +45,7 @@ part could not be verified here, or deviates from the spec in a stated way.
 | Tuner gain list from the device, tuner AGC, RTL AGC | done | 29 gains read from the R828D; gain, tuner AGC (disables the slider) and RTL AGC changed live while streaming |
 | Frequency correction (ppm) | done | Set live on hardware without error. The frequency shift itself was not measured against a reference. |
 | Direct sampling (I/Q branch) | partial | Mode switch works on hardware (range becomes 0.5–28.8 MHz, centre re-clamped, streaming continues). HF reception wasn't verified: the V4 does HF through its upconverter, not direct sampling, and no HF antenna was attached. |
-| Offset tuning | partial | Implemented. The attached R828D doesn't support it; PyRX shows one clear "not supported" message, verified on hardware. Not tested on an E4000/FC tuner. |
+| Offset tuning | partial | Implemented. The attached R828D doesn't support it; SpecSDR shows one clear "not supported" message, verified on hardware. Not tested on an E4000/FC tuner. |
 | Bias-tee | partial | Implemented with a confirmation dialog, never restored at start-up, switched off on close. Only the *Cancel* path was exercised on hardware, deliberately: no DC on unknown antennas. |
 | HackRF: enumerate by serial | done | Real device listed by serial |
 | HackRF 2–20 MS/s | done | Ran 2, 4, 10, 12.5, 16 and 20 MS/s on hardware; measured rate = nominal |
@@ -84,7 +84,7 @@ full-suite runs and 8 GUI-only runs were all green; the only later code change w
 drift-loop gain. The suite also passed in a fresh Python 3.11 venv (before the last few fixes).
 
 *Found and fixed during testing:* one full-suite run segfaulted in Qt's graphics scene during GUI
-test teardown. A queued scene update reached pyqtgraph items of an already-closed window. PyRX now
+test teardown. A queued scene update reached pyqtgraph items of an already-closed window. SpecSDR now
 closes its plot widgets explicitly when a window closes (`SpectrumPanel.shutdown`). It didn't
 recur in 11 runs after that, but it was intermittent, so it is listed under known issues too.
 
@@ -98,7 +98,7 @@ recur in 11 runs after that, but it was intermittent, so it is listed under know
 | 6 | Spectrum peak bin and axis label | correct | Exact bin at 1k/8k/64k FFT; amplitude −6.02 dBFS for a 0.5 tone; axis label = frequency |
 | 7 | Out-of-band (aliasing) tone | ≥ 60 dB | **105.6 dB** (2.4 MS/s ÷50), **108.3 dB** (10 MS/s ÷200) |
 | 8 | Record sim IQ → file source → same peak | same peak | Identical peak bin for 16-bit, 8-bit and float WAV |
-| 9 | `python -m pyrx --source simulated --autostart --exit-after 10` (offscreen) | exit 0, no exceptions | Exit 0, ~490 blocks, 0 drops, no ERROR/Traceback. Also checked in a fresh venv. |
+| 9 | `python -m specsdr --source simulated --autostart --exit-after 10` (offscreen) | exit 0, no exceptions | Exit 0, ~490 blocks, 0 drops, no ERROR/Traceback. Also checked in a fresh venv. |
 
 `requirements.txt` was checked in a brand-new venv (`pip install -r requirements.txt`, no system
 libraries needed). The smoke command then ran from that venv.
@@ -123,7 +123,7 @@ frame pacing, drift control) are in DECISIONS.md.
 
 ### 10-minute audio run
 
-`python -m pyrx --source simulated --autostart --exit-after 600 --stats`, WFM stereo at
+`python -m specsdr --source simulated --autostart --exit-after 600 --stats`, WFM stereo at
 99.8 MHz, real sound card (sounddevice → PipeWire, 48 kHz), output muted (the stream and its
 timing run normally; it just plays zeros), final code:
 
@@ -154,7 +154,7 @@ the first 8 s. That led to the 80 ms device buffer (DECISIONS.md).
 - Waterfall history is max-pooled to at most 8192 columns. With FFT sizes 16k–64k the spectrum
   trace has full resolution, but the waterfall is coarser when deeply zoomed.
 - Changing the FFT size or sample rate clears the waterfall history.
-- After a device is lost, PyRX stops and tells you once. It does not reconnect automatically:
+- After a device is lost, SpecSDR stops and tells you once. It does not reconnect automatically:
   re-plug, press ⟳, then Start.
 - The simulator synthesises in real time. At 10 MS/s that costs ~60 % of a core by itself, which is
   why the high-rate figures were measured with the HackRF.
@@ -168,9 +168,9 @@ the first 8 s. That led to the 80 ms device buffer (DECISIONS.md).
   update after a window closed) and fixed. It didn't recur in 11 runs; never seen in the app itself
   (all ~30 app runs exited with code 0).
 - librtlsdr prints its own diagnostics to stderr (e.g. "Found Rafael Micro R828D tuner",
-  "cb transfer status: 5, canceling..." on device loss). These are not PyRX errors.
+  "cb transfer status: 5, canceling..." on device loss). These are not SpecSDR errors.
 - pyrtlsdr must be 0.3.0 (newer versions don't import against the standard librtlsdr), and it
-  emits a `pkg_resources` deprecation notice, which PyRX suppresses.
+  emits a `pkg_resources` deprecation notice, which SpecSDR suppresses.
 
 ## Nothing blocked
 
@@ -189,7 +189,7 @@ Legend: **done** = implemented and verified as stated; **partial** = implemented
 
 ## Tests
 
-Baseline before any change: **84 passed, 0 failed, 0 skipped** (the original suite). After the work: **120 passed, 0 failed, 0 skipped** (the 84 originals plus 36 new FPV tests in `tests/test_fpv_acceptance.py` and `tests/test_fpv_app.py`). The final `.venv/bin/python -m pytest` run on the final code passed; several earlier runs on near-final code were also green, and 30 consecutive application exits were clean after the exit fix described under known bugs. `requirements.txt` was also installed into a fresh venv (no system libraries), and the app ran the smoke command from it.
+Baseline before any change: **84 passed, 0 failed, 0 skipped** (the original suite). After the work: **121 passed, 0 failed, 0 skipped** (the 84 originals, 1 settings migration test, and 36 new FPV tests in `tests/test_fpv_acceptance.py` and `tests/test_fpv_app.py`). The final `.venv/bin/python -m pytest` run on the final code passed; several earlier runs on near-final code were also green, and 30 consecutive application exits were clean after the exit fix described under known bugs. `requirements.txt` was also installed into a fresh venv (no system libraries), and the app ran the smoke command from it.
 
 | Acceptance test | Requirement | Result |
 |---|---|---|
@@ -264,7 +264,7 @@ Baseline before any change: **84 passed, 0 failed, 0 skipped** (the original sui
 - Only PAL-B/G/D/I-style 4.43 PAL and NTSC-M 3.58 are decoded. PAL-M/N and NTSC-4.43 are out of scope.
 - Weave deinterlacing shows combing on fast motion; switch to Line doubling. Weave is the default.
 - Video AGC relies on the sync amplitude; a transmitter with an unusual sync level (or heavy clipping) reads wrongly.
-- The Qt/sip teardown at interpreter exit could segfault occasionally on Python 3.14 (backtrace in `cleanup_qobject`). `pyrx.app.main` now exits with `os._exit` after closing everything cleanly in `closeEvent`; 30/30 exits clean after that.
+- The Qt/sip teardown at interpreter exit could segfault occasionally on Python 3.14 (backtrace in `cleanup_qobject`). `specsdr.app.main` now exits with `os._exit` after closing everything cleanly in `closeEvent`; 30/30 exits clean after that.
 - Scanner: range steps of 8 MHz; a transmitter between steps with a large offset can be reported from two steps and is merged within 7 MHz.
 
 ## Blocked by

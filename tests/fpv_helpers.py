@@ -4,10 +4,10 @@ import math
 
 import numpy as np
 
-from pyrx.dsp.filters import kaiser_lowpass
-from pyrx.dsp.fpv.decoder import FpvDecoder, FpvParams
-from pyrx.dsp.fpv.pattern import FpvTransmitter, read_counter  # noqa: F401
-from pyrx.dsp.fpv.standards import NTSC, PAL  # noqa: F401
+from specsdr.dsp.filters import kaiser_lowpass
+from specsdr.dsp.fpv.decoder import FpvDecoder, FpvParams
+from specsdr.dsp.fpv.pattern import FpvTransmitter, read_counter  # noqa: F401
+from specsdr.dsp.fpv.standards import NTSC, PAL  # noqa: F401
 
 FS = 20e6
 

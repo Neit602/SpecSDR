@@ -14,14 +14,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5 import QtGui  # noqa: E402
 
 from fpv_helpers import FS, PAL, decode, decoder_luma_response, hue_deg, luma_psnr, make_signal, read_counter  # noqa: E402
-from pyrx.audio.sink import NullSink  # noqa: E402
-from pyrx.config.fpv_channels import BANDS, nearest_channel, standard_channels  # noqa: E402
-from pyrx.core.engine import Engine  # noqa: E402
-from pyrx.core.fpv import FpvScanner  # noqa: E402
-from pyrx.core.recorder import VideoRecorder, iq_recorder  # noqa: E402
-from pyrx.dsp.fpv.pattern import VideoPattern  # noqa: E402
-from pyrx.sources.iqfile import IqFileSource  # noqa: E402
-from pyrx.sources.simulated import SimulatedSource  # noqa: E402
+from specsdr.audio.sink import NullSink  # noqa: E402
+from specsdr.config.fpv_channels import BANDS, nearest_channel, standard_channels  # noqa: E402
+from specsdr.core.engine import Engine  # noqa: E402
+from specsdr.core.fpv import FpvScanner  # noqa: E402
+from specsdr.core.recorder import VideoRecorder, iq_recorder  # noqa: E402
+from specsdr.dsp.fpv.pattern import VideoPattern  # noqa: E402
+from specsdr.sources.iqfile import IqFileSource  # noqa: E402
+from specsdr.sources.simulated import SimulatedSource  # noqa: E402
 from tests_ui_helpers import open_window  # noqa: E402
 
 
@@ -129,7 +129,7 @@ def test_cs8_file_round_trip_decodes_the_pattern(tmp_path):
 def test_audio_subcarrier_recovers_tone():
     """FM subcarrier at 6.5 MHz carrying 1 kHz comes out as 1 kHz audio."""
     from helpers import dominant
-    from pyrx.dsp.fpv.audio import FpvAudio
+    from specsdr.dsp.fpv.audio import FpvAudio
     fs = FS
     n = int(0.5 * fs)
     t = np.arange(n) / fs
@@ -148,10 +148,10 @@ def test_audio_subcarrier_recovers_tone():
 
 def test_sim_transmitter_audio_reaches_decoder():
     """A simulated transmitter's 6.5 MHz FM sound comes out of the decoder's audio block."""
-    from pyrx.core.fpv import FpvWorker
-    from pyrx.dsp.fpv.decoder import FpvParams
+    from specsdr.core.fpv import FpvWorker
+    from specsdr.dsp.fpv.decoder import FpvParams
     from helpers import dominant
-    from pyrx.dsp.fpv.pattern import FpvTransmitter
+    from specsdr.dsp.fpv.pattern import FpvTransmitter
     tx = FpvTransmitter(PAL, FS, audio_subcarrier=6.5e6)
     x = tx.generate(int(0.8 * FS))
     worker = FpvWorker(FS, FpvParams(), sink=NullSink())
@@ -171,7 +171,7 @@ def test_sim_transmitter_audio_reaches_decoder():
 
 
 def test_audio_subcarrier_option_changes_frequency():
-    from pyrx.dsp.fpv.audio import FpvAudio, SUBCARRIERS
+    from specsdr.dsp.fpv.audio import FpvAudio, SUBCARRIERS
     assert SUBCARRIERS == (6.5e6, 6.0e6, 5.5e6)
     a = FpvAudio(FS)
     a.set_subcarrier(5.5e6)
@@ -182,7 +182,7 @@ def test_audio_subcarrier_option_changes_frequency():
 
 @pytest.mark.parametrize("fs", [16e6, 10e6])
 def test_decoder_handles_other_sample_rates(fs):
-    from pyrx.dsp.fpv.decoder import FpvDecoder
+    from specsdr.dsp.fpv.decoder import FpvDecoder
     x, tx = make_signal(PAL, seconds=0.4, cnr=25, deviation=6e6, fs=fs)
     d = FpvDecoder(fs)
     d.process(x)
@@ -265,7 +265,7 @@ def test_fpv_mode_disabled_for_rtlsdr_with_explanation(win):
 
 
 def test_channel_selector_and_bookmark_groups(win):
-    from pyrx.config.fpv_channels import make_bookmark
+    from specsdr.config.fpv_channels import make_bookmark
     p = win.p_fpv
     assert p.band.count() == 6
     win.bookmarks.add(make_bookmark("Long range 1.3G", 1280e6, "1.3 GHz"))
@@ -286,7 +286,7 @@ def test_channel_selector_and_bookmark_groups(win):
 
 
 def test_scanner_results_double_click_tunes(win, qtbot):
-    from pyrx.core.fpv import ScanResult
+    from specsdr.core.fpv import ScanResult
     win.set_mode("FPV")
     win.p_scan.set_results([ScanResult(5917e6, "R8", "NTSC", -20.0, time.time(), 0.9)])
     it = win.p_scan.results.topLevelItem(0)
@@ -318,7 +318,7 @@ def test_fpv_settings_persist(qtbot, tmp_path):
     w.p_scan.f_lo.setValue(1000)
     w.p_scan.f_hi.setValue(1400)
     w.close()
-    from pyrx.config.settings import Settings
+    from specsdr.config.settings import Settings
     s = Settings(os.path.join(str(tmp_path), "settings.json")).load()
     assert s["radio"]["mode"] == "FPV"
     assert s["fpv"]["saturation"] == pytest.approx(1.4)
@@ -349,12 +349,12 @@ def test_fpv_recording_through_window(win, qtbot, tmp_path):
 
 
 def test_video_smoke_command_line(tmp_path):
-    """Acceptance: python -m pyrx --source simulated --mode fpv --frequency 5800e6 --autostart
+    """Acceptance: python -m specsdr --source simulated --mode fpv --frequency 5800e6 --autostart
     --exit-after 10 --snapshot out.png exits 0, logs no exceptions and writes the test pattern."""
     out = os.path.join(str(tmp_path), "out.png")
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYRX_CONFIG_DIR=str(tmp_path), PYRX_NO_AUDIO="1")
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", SPECSDR_CONFIG_DIR=str(tmp_path), SPECSDR_NO_AUDIO="1")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    p = subprocess.run([sys.executable, "-m", "pyrx", "--source", "simulated", "--mode", "fpv", "--frequency", "5800e6",
+    p = subprocess.run([sys.executable, "-m", "specsdr", "--source", "simulated", "--mode", "fpv", "--frequency", "5800e6",
                         "--autostart", "--exit-after", "10", "--snapshot", out],
                        cwd=root, env=env, capture_output=True, text=True, timeout=90)
     log = p.stdout + p.stderr

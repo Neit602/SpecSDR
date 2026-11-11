@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Add PyRX to the Linux applications menu for the current user (no root needed).
+# Add SpecSDR to the Linux applications menu for the current user (no root needed).
 # The launcher stores this folder's absolute path, so run this again if the project moves.
 set -euo pipefail
 
@@ -12,8 +12,8 @@ if [[ ! -x $python ]]; then
     exit 1
 fi
 
-install -Dm644 "$root/pyrx/ui/icons/pyrx.svg" "$data/icons/hicolor/scalable/apps/pyrx.svg"
-install -Dm644 "$root/pyrx/ui/icons/pyrx.png" "$data/icons/hicolor/256x256/apps/pyrx.png"
+install -Dm644 "$root/specsdr/ui/icons/specsdr.svg" "$data/icons/hicolor/scalable/apps/specsdr.svg"
+install -Dm644 "$root/specsdr/ui/icons/specsdr.png" "$data/icons/hicolor/256x256/apps/specsdr.png"
 
 # Exec needs the path quoted (the folder name may contain '#' or spaces) and escaped per the
 # Desktop Entry spec: quoting first, then string-level backslashes, and '%' doubled.
@@ -21,23 +21,23 @@ exec_path=$(printf '%s' "$python" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e
 workdir=$(printf '%s' "$root" | sed -e 's/\\/\\\\/g')
 
 install -d "$data/applications"
-cat > "$data/applications/pyrx.desktop" <<DESKTOP
+cat > "$data/applications/specsdr.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=PyRX
+Name=SpecSDR
 GenericName=SDR Receiver
 Comment=Software-defined radio receiver with analog FPV video
-Exec="$exec_path" -m pyrx
+Exec="$exec_path" -m specsdr
 Path=$workdir
-Icon=pyrx
+Icon=specsdr
 Terminal=false
 Categories=Network;HamRadio;
 Keywords=SDR;radio;RTL-SDR;HackRF;FPV;
-StartupWMClass=PyRX
+StartupWMClass=SpecSDR
 DESKTOP
 
 if command -v update-desktop-database >/dev/null; then
     update-desktop-database -q "$data/applications" || true
 fi
 
-echo "Installed: $data/applications/pyrx.desktop"
+echo "Installed: $data/applications/specsdr.desktop"

@@ -1,14 +1,16 @@
 import datetime as dt
 
+import sys
+
 import numpy as np
 import pytest
 
-from pyrx.config.bookmarks import Bookmark, BookmarkStore
-from pyrx.config.settings import Settings
-from pyrx.core.tuning import TuneContext, plan, snap
-from pyrx.core.wavio import WavWriter, from_complex, iq_filename, parse_iq_filename, read_wav_info, to_complex
-from pyrx.sources.iqfile import FileMetadataMissing, IqFileSource
-from pyrx.ui.freq_display import parse_frequency
+from specsdr.config.bookmarks import Bookmark, BookmarkStore
+from specsdr.config.settings import Settings
+from specsdr.core.tuning import TuneContext, plan, snap
+from specsdr.core.wavio import WavWriter, from_complex, iq_filename, parse_iq_filename, read_wav_info, to_complex
+from specsdr.sources.iqfile import FileMetadataMissing, IqFileSource
+from specsdr.ui.freq_display import parse_frequency
 
 
 def ctx(**kw):
@@ -60,7 +62,7 @@ def test_parse_frequency_rejects_garbage():
 
 
 @pytest.mark.parametrize("name,center,rate", [
-    ("pyrx_20261019_120000Z_100000000Hz_2400000sps_IQ.wav", 100e6, 2.4e6),
+    ("specsdr_20261019_120000Z_100000000Hz_2400000sps_IQ.wav", 100e6, 2.4e6),
     ("SDRSharp_20200101_120000Z_145500000Hz_IQ.wav", 145.5e6, None),
     ("gqrx_20200101_120000_100000000_2400000_fc.raw", 100e6, 2.4e6),
     ("capture_433.92MHz_2.048Msps.cu8", 433.92e6, 2.048e6),
@@ -149,3 +151,18 @@ def test_bookmarks_roundtrip(tmp_path):
 def test_iq_filename_has_metadata(tmp_path):
     p = iq_filename(str(tmp_path), 433.92e6, 2.048e6, dt.datetime(2026, 1, 2, 3, 4, 5))
     assert parse_iq_filename(p) == (433.92e6, 2.048e6)
+
+
+def test_settings_are_copied_from_the_former_application_folder(tmp_path, monkeypatch):
+    from specsdr.config import settings as cfg
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        pytest.skip("uses the XDG path")
+    old = tmp_path / "pyrx"
+    old.mkdir()
+    (old / "settings.json").write_text("{}")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("SPECSDR_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(cfg, "_config_dir_override", None)
+    assert cfg.config_dir() == str(tmp_path / "specsdr")
+    assert (tmp_path / "specsdr" / "settings.json").exists()
+    assert (old / "settings.json").exists()

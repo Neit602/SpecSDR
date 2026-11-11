@@ -1,4 +1,4 @@
-# PyRX
+# SpecSDR
 
 A receive-only software-defined radio for the desktop, written in Python (PyQt5, numpy/scipy,
 pyqtgraph). The layout and workflow follow the classic SDR# style: a collapsible side panel,
@@ -29,7 +29,7 @@ All three were captured live from a HackRF One.
 
 ## 1. Install
 
-PyRX needs Python 3.10 or newer.
+SpecSDR needs Python 3.10 or newer.
 
 ```bash
 python3 -m venv .venv
@@ -43,7 +43,7 @@ system library is optional at runtime:
 
 | Feature | Needs | If missing |
 |---|---|---|
-| Sound | PortAudio (`libportaudio2`), bundled in the Windows/macOS wheels | PyRX runs with a silent null output and says so in the status bar |
+| Sound | PortAudio (`libportaudio2`), bundled in the Windows/macOS wheels | SpecSDR runs with a silent null output and says so in the status bar |
 | RTL-SDR | `librtlsdr` + `pyrtlsdr==0.3.0` | "RTL-SDR (unavailable)" in the source list, tooltip says why |
 | HackRF One | `libhackrf` (no Python package needed) | "HackRF One (unavailable)" |
 
@@ -64,7 +64,7 @@ The RTL-SDR Blog **V4** (R828D tuner) needs a librtlsdr that knows it: the RTL-S
 (1.3.5 or newer) or osmocom 2.0.2 or newer. Older libraries tune it wrongly.
 
 **udev rules** (so you don't need root). The `rtl-sdr` and `hackrf` packages usually install
-these. If yours didn't, create `/etc/udev/rules.d/52-pyrx-sdr.rules`:
+these. If yours didn't, create `/etc/udev/rules.d/52-specsdr-sdr.rules`:
 
 ```
 # RTL2832U dongles
@@ -79,7 +79,7 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="000c", MODE="0660"
 then `sudo udevadm control --reload-rules && sudo udevadm trigger` and re-plug the device.
 
 **Blacklist the DVB-T driver** (otherwise the kernel claims the RTL dongle as a TV tuner and
-PyRX reports "busy"). Create `/etc/modprobe.d/blacklist-rtl-sdr.conf`:
+SpecSDR reports "busy"). Create `/etc/modprobe.d/blacklist-rtl-sdr.conf`:
 
 ```
 blacklist dvb_usb_rtl28xxu
@@ -90,7 +90,7 @@ blacklist rtl2832_sdr
 
 then `sudo modprobe -r dvb_usb_rtl28xxu rtl2832_sdr rtl2832` (or reboot).
 
-Check the hardware outside PyRX with `rtl_test` and `hackrf_info`.
+Check the hardware outside SpecSDR with `rtl_test` and `hackrf_info`.
 
 ### Windows
 
@@ -109,8 +109,8 @@ Check the hardware outside PyRX with `rtl_test` and `hackrf_info`.
    * HackRF: `hackrf.dll` and `libusb-1.0.dll` (plus `pthreadVC2.dll` for older builds), from a
      HackRF Windows build, PothosSDR (`C:\Program Files\PothosSDR\bin`) or radioconda.
    * Put them in the project's **`drivers\`** folder, or in a folder named by the
-     `PYRX_DLL_DIR` environment variable. Folders on `PATH` that contain `rtlsdr.dll` / `hackrf.dll`
-     are also used. (Python 3.8+ no longer searches `PATH` for ctypes DLLs, so PyRX registers these
+     `SPECSDR_DLL_DIR` environment variable. Folders on `PATH` that contain `rtlsdr.dll` / `hackrf.dll`
+     are also used. (Python 3.8+ no longer searches `PATH` for ctypes DLLs, so SpecSDR registers these
      folders itself.)
 
 ---
@@ -118,34 +118,34 @@ Check the hardware outside PyRX with `rtl_test` and `hackrf_info`.
 ## 2. Run
 
 ```bash
-.venv/bin/python -m pyrx                      # last used source and settings
-.venv/bin/python -m pyrx --source simulated --autostart
-.venv/bin/python -m pyrx --file capture_100MHz_2.4Msps.cu8 --autostart
+.venv/bin/python -m specsdr                      # last used source and settings
+.venv/bin/python -m specsdr --source simulated --autostart
+.venv/bin/python -m specsdr --file capture_100MHz_2.4Msps.cu8 --autostart
 ```
 
-Running the file directly (`.venv/bin/python pyrx/__main__.py`, e.g. as an IDE run
+Running the file directly (`.venv/bin/python specsdr/__main__.py`, e.g. as an IDE run
 configuration) works as well.
 
 Options: `--source {simulated,file,rtlsdr,hackrf}`, `--file PATH`, `--freq HZ`, `--mode MODE`,
-`--autostart`, `--exit-after SECONDS`, `--no-audio` (null output; `PYRX_NO_AUDIO=1` does the same),
+`--autostart`, `--exit-after SECONDS`, `--no-audio` (null output; `SPECSDR_NO_AUDIO=1` does the same),
 `--config-dir DIR`, `--reset-settings`, `--stats` (log fps/CPU/drops every second),
 `--log-level`.
 
 Headless check (used by the test suite):
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m pyrx --source simulated --autostart --exit-after 10
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m specsdr --source simulated --autostart --exit-after 10
 ```
 
-To add PyRX to the applications menu on Linux, with its icon, run this once (no root needed).
+To add SpecSDR to the applications menu on Linux, with its icon, run this once (no root needed).
 It stores the project's absolute path, so run it again if you move the folder:
 
 ```bash
 ./install-desktop.sh
 ```
 
-Settings and bookmarks are in `~/.config/pyrx/` (Linux), `%APPDATA%\PyRX\` (Windows),
-`~/Library/Application Support/PyRX/` (macOS).
+Settings and bookmarks are in `~/.config/specsdr/` (Linux), `%APPDATA%\SpecSDR\` (Windows),
+`~/Library/Application Support/SpecSDR/` (macOS).
 
 ## 3. Using it
 
@@ -175,12 +175,12 @@ Keyboard: `Space` start/stop · `←/→` step tune (`Shift` = ×10) · `↑/↓
 noise and an optional DC spike can be changed in ⚙.
 
 **Recordings** go to the folder in the Recording panel. IQ recordings are WAV files, with the
-centre frequency and sample rate in the name (`pyrx_<UTC time>_<centre>Hz_<rate>sps_IQ.wav`),
+centre frequency and sample rate in the name (`specsdr_<UTC time>_<centre>Hz_<rate>sps_IQ.wav`),
 so they replay directly in the IQ file source. Files are split before 4 GB.
 
 ## 4. FPV video (analog FM video, HackRF)
 
-Press **FPV** in the Radio panel (or *Enter FPV Video mode* in the **FPV Video** section). PyRX switches to
+Press **FPV** in the Radio panel (or *Enter FPV Video mode* in the **FPV Video** section). SpecSDR switches to
 20 MS/s with a 20 MHz baseband filter, tunes to the channel, opens the **FPV Video** panel and keeps the spectrum and waterfall running.
 Leaving the mode restores the previous mode, sample rate, filter and tuning. The mode works with HackRF One, the Simulated source and IQ files, and is disabled for RTL-SDR
 (too narrow and too low in frequency).
@@ -190,13 +190,13 @@ Leaving the mode restores the previous mode, sample rate, filter and tuning. The
 * **Picture:** Standard auto/PAL/NTSC, Deinterlace (weave or line doubling), Video BW (removes the sound subcarrier), Colour and Saturation, Brightness, Contrast, Video AGC or manual Gain, Sync threshold, H/V position, Aspect 4:3 or 16:9, status overlay.
   When the signal drops, choose *Show NO SIGNAL screen* or *Show raw (noisy) picture*.
 * **Status overlay:** H/V lock, standard, colour lock, carrier offset, level and CNR, decoded fps, latency, dropped fields and samples.
-* **Video panel:** dockable and resizable, *Full screen* (double-click or Esc to return), *Snapshot* to PNG and *Record video* to MP4 (`pyrx_<UTC>_<freq>Hz_FPV.mp4`).
+* **Video panel:** dockable and resizable, *Full screen* (double-click or Esc to return), *Snapshot* to PNG and *Record video* to MP4 (`specsdr_<UTC>_<freq>Hz_FPV.mp4`).
 * **Audio subcarrier:** tick *Audio subcarrier* and pick 6.5, 6.0 or 5.5 MHz.
 * **Scanner** (FPV Scanner section): pick channels (selected bands/groups) or a range (`1000`–`6000` MHz) in 8 MHz overlapping steps, optional *Continuous* re-scan and *Auto-tune* to the strongest. Results show
   frequency, nearest channel, standard, level and last seen; double-click tunes. Detection is by sync structure, so CW, Wi-Fi and digital FPV links are not reported.
 * **Recording raw IQ:** Recording panel, format *8-bit signed .cs8* (identical to `hackrf_transfer -r`). Filenames carry frequency and rate, so files replay with *File → Open IQ file* and decode at 20 MS/s through the IQ file source.
 
-Headless check: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pyrx --source simulated --mode fpv --frequency 5800e6 --autostart --exit-after 10 --snapshot out.png`.
+Headless check: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m specsdr --source simulated --mode fpv --frequency 5800e6 --autostart --exit-after 10 --snapshot out.png`.
 Options: `--mode fpv`, `--frequency HZ` (same as `--freq`), `--snapshot PNG`, `--stats` (logs fps and latency every second).
 
 ### Manual hardware checklist (a real HackRF and an analog 5.8 GHz video transmitter)

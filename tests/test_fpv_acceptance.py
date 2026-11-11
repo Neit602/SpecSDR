@@ -7,8 +7,8 @@ import pytest
 
 from fpv_helpers import (FS, NTSC, PAL, awgn, decode, decoder_luma_response, hue_deg, luma_psnr,
                          make_signal, read_counter)
-from pyrx.dsp.fpv import kernels as k  # noqa: E402
-from pyrx.dsp.fpv.decoder import FpvDecoder, FpvParams
+from specsdr.dsp.fpv import kernels as k  # noqa: E402
+from specsdr.dsp.fpv.decoder import FpvDecoder, FpvParams
 
 STANDARDS = {"PAL": PAL, "NTSC": NTSC}
 
@@ -213,8 +213,8 @@ def test_colour_bars_hue(std):
 
 def test_greyscale_fallback_without_burst():
     """A burst-less (monochrome) signal decodes as greyscale, no colour lock, no chroma."""
-    from pyrx.dsp.filters import kaiser_lowpass
-    from pyrx.dsp.fpv.pattern import FpvTransmitter
+    from specsdr.dsp.filters import kaiser_lowpass
+    from specsdr.dsp.fpv.pattern import FpvTransmitter
     tx = FpvTransmitter(PAL, FS)
     comp = tx.composite(int(0.4 * FS))
     taps = kaiser_lowpass(FS, 2.5e6, 3.5e6, 50.0).astype(np.float64)
@@ -230,8 +230,8 @@ def test_greyscale_fallback_without_burst():
 
 def test_scanner_detects_video_not_other_signals():
     """detect_video: PAL/NTSC found by line structure; CW, OFDM-like and noise are not video."""
-    from pyrx.dsp.fpv.detect import detect_video
-    from pyrx.sources.simulated import SimulatedSource
+    from specsdr.dsp.fpv.detect import detect_video
+    from specsdr.sources.simulated import SimulatedSource
     src = SimulatedSource()
     src.open()
     src.set_sample_rate(FS)
@@ -263,7 +263,7 @@ def test_unlocked_raw_picture_and_no_lock_on_noise():
     """Noise only: no lock claimed; with show_raw the (noisy) picture is still produced."""
     n = int(0.3 * FS)
     x = awgn(n, -5.0, 11)
-    d = FpvDecoder(FS, __import__("pyrx.dsp.fpv.decoder", fromlist=["FpvParams"]).FpvParams(show_raw=True))
+    d = FpvDecoder(FS, __import__("specsdr.dsp.fpv.decoder", fromlist=["FpvParams"]).FpvParams(show_raw=True))
     d.process(x)
     d.flush()
     frames = d.take_frames()

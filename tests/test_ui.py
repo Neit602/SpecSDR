@@ -11,9 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5 import QtCore, QtGui, QtWidgets  # noqa: E402
 
-from pyrx.dsp.spectrum import SpectrumFrame  # noqa: E402
-from pyrx.ui.freq_display import FrequencyDisplay  # noqa: E402
-from pyrx.ui.plots import FreqAxis, SpectrumPanel  # noqa: E402
+from specsdr.dsp.spectrum import SpectrumFrame  # noqa: E402
+from specsdr.ui.freq_display import FrequencyDisplay  # noqa: E402
+from specsdr.ui.plots import FreqAxis, SpectrumPanel  # noqa: E402
 
 
 @pytest.fixture
@@ -136,9 +136,9 @@ def test_waterfall_shifts_on_retune(qtbot):
 
 
 def test_main_window_basic_flow(qtbot, tmp_path):
-    from pyrx.app import parse_args
-    from pyrx.config.settings import Settings, set_config_dir
-    from pyrx.ui.main_window import MainWindow
+    from specsdr.app import parse_args
+    from specsdr.config.settings import Settings, set_config_dir
+    from specsdr.ui.main_window import MainWindow
     set_config_dir(str(tmp_path))
     w = MainWindow(Settings(), parse_args(["--source", "simulated", "--no-audio"]))
     qtbot.addWidget(w)
@@ -167,11 +167,11 @@ def test_main_window_basic_flow(qtbot, tmp_path):
 
 
 def test_smoke_command_line(tmp_path):
-    """Acceptance 9: python -m pyrx --source simulated --autostart --exit-after 10."""
-    # PYRX_NO_AUDIO: don't play sound on the test machine (the command line is the spec's)
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYRX_CONFIG_DIR=str(tmp_path), PYRX_NO_AUDIO="1")
+    """Acceptance 9: python -m specsdr --source simulated --autostart --exit-after 10."""
+    # SPECSDR_NO_AUDIO: don't play sound on the test machine (the command line is the spec's)
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", SPECSDR_CONFIG_DIR=str(tmp_path), SPECSDR_NO_AUDIO="1")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    p = subprocess.run([sys.executable, "-m", "pyrx", "--source", "simulated", "--autostart", "--exit-after", "10"],
+    p = subprocess.run([sys.executable, "-m", "specsdr", "--source", "simulated", "--autostart", "--exit-after", "10"],
                        cwd=root, env=env, capture_output=True, text=True, timeout=60)
     log = p.stdout + p.stderr
     assert p.returncode == 0, log
@@ -184,8 +184,8 @@ def test_smoke_command_line(tmp_path):
 # ----------------------------------------------------------------------------- more GUI flows
 
 def test_device_forms_build_for_all_sources(qtbot):
-    from pyrx.sources import source_classes
-    from pyrx.ui.widgets import ControlsForm
+    from specsdr.sources import source_classes
+    from specsdr.ui.widgets import ControlsForm
     for cls in source_classes():
         src = cls()  # not opened: forms must still build
         f = ControlsForm(src)
@@ -194,8 +194,8 @@ def test_device_forms_build_for_all_sources(qtbot):
 
 
 def test_confirmation_required_for_antenna_power(qtbot, monkeypatch):
-    from pyrx.sources.hackrf_source import HackRFSource
-    from pyrx.ui.widgets import ControlsForm
+    from specsdr.sources.hackrf_source import HackRFSource
+    from specsdr.ui.widgets import ControlsForm
     src = HackRFSource()
     f = ControlsForm(src)
     qtbot.addWidget(f)
@@ -212,9 +212,9 @@ def test_confirmation_required_for_antenna_power(qtbot, monkeypatch):
 
 
 def _window(qtbot, tmp_path, *extra):
-    from pyrx.app import parse_args
-    from pyrx.config.settings import Settings, set_config_dir
-    from pyrx.ui.main_window import MainWindow
+    from specsdr.app import parse_args
+    from specsdr.config.settings import Settings, set_config_dir
+    from specsdr.ui.main_window import MainWindow
     set_config_dir(str(tmp_path))
     w = MainWindow(Settings(), parse_args(["--no-audio", *extra]))
     qtbot.addWidget(w)
@@ -223,7 +223,7 @@ def _window(qtbot, tmp_path, *extra):
 
 
 def test_bookmark_tunes_frequency_mode_and_bandwidth(qtbot, tmp_path):
-    from pyrx.config.bookmarks import Bookmark
+    from specsdr.config.bookmarks import Bookmark
     w = _window(qtbot, tmp_path, "--source", "simulated")
     w.p_bm.store.add(Bookmark("NFM sim", 100.25e6, "NFM", 10000, "Sim"))
     w.p_bm.reload()

@@ -1,7 +1,7 @@
 """Thin ctypes binding to libhackrf - receive functions only.
 
 Deliberately RX-only: no transmit function (hackrf_start_tx, hackrf_set_txvga_gain, ...)
-is bound, so PyRX cannot transmit even by accident. Signatures follow libhackrf's
+is bound, so SpecSDR cannot transmit even by accident. Signatures follow libhackrf's
 hackrf.h (checked against release 2026.01.3; the API used here has been stable since 2014)."""
 
 from __future__ import annotations
